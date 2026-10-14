@@ -1,0 +1,19 @@
+[package]
+name = "claudemusic"
+version = "0.3.0"
+description = "私人非商用音乐播放器 — Claude Code 风格"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+urlencoding = "2"
+url = "2"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

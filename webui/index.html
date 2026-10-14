@@ -234,6 +234,31 @@
 
 <audio id="audio"></audio>
 <script>
+/* ==================== Tauri 桥接层 ==================== */
+/* 在 Tauri 中: 网易云请求走 proxy.localhost 自定义协议(同源+ACAO),
+   使 fetch 不受 CORS 限制、Web Audio AnalyserNode 不被跨域污染 */
+(function () {
+  const IS_TAURI = !!(window.__TAURI_INTERNALS__ || window.__TAURI__);
+  const NETEASE_RE = /music\.163\.com|126\.net/;
+  if (IS_TAURI) {
+    const P = "http://proxy.localhost/";
+    const origFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      const u = typeof input === "string" ? input : input && input.url;
+      if (u && NETEASE_RE.test(u)) return origFetch(P + encodeURIComponent(u), init);
+      return origFetch(input, init);
+    };
+    window.__CM_PROXY__ = function (u) {
+      return NETEASE_RE.test(u) ? P + encodeURIComponent(u) : u;
+    };
+    document.documentElement.dataset.env = "tauri";
+  } else {
+    document.documentElement.dataset.env = "browser";
+  }
+  window.__CM_IS_TAURI__ = IS_TAURI;
+})();
+</script>
+<script>
 "use strict";
 const $ = (id) => document.getElementById(id);
 const audio = $("audio");
@@ -262,7 +287,9 @@ mascot.addEventListener("click", () => {
 /* ==================== 时钟 ==================== */
 setInterval(() => { $("clock").textContent = new Date().toTimeString().slice(0, 8); }, 1000);
 
-/* ==================== 歌词（演示文案） ==================== */
+/* ==================== 字幕引擎（LRC 歌词工具） ==================== */
+/* 内置工具: fetchLrc(网易云歌词) / parseLrc(LRC解析) / colorize(关键词分色)
+   / syncLrc(逐行同步渲染)。浏览器直连受限时自动降级为演示文案。 */
 const DEMO_LYRICS = [
   "落日 把云朵 烫成了 <b class='k1'>橘色</b>",
   "你像 <b class='k1'>一阵风</b> 吹散了 <b class='k2'>烦恼</b>",
@@ -271,18 +298,77 @@ const DEMO_LYRICS = [
   "晚风 轻轻 哼着 <b class='k3'>歌</b>",
   "星星 排好队 为你 <b class='k2'>闪烁</b>",
 ];
-let lyricIdx = 0, lyricTimer = null, lyricEl = null;
-function nextLyric() {
-  if (lyricEl) lyricEl.remove();
+let lyricMode = true, lrcLines = [], lrcPtr = 0, lyricIdx = 0, lyricTimer = null, lyricEl = null;
+
+async function fetchLrc(id) {
+  try {
+    const r = await fetch("https://music.163.com/api/song/lyric?id=" + id + "&lv=1&kv=1&tv=-1", { signal: AbortSignal.timeout(6000) });
+    const d = await r.json();
+    return d.lrc && d.lrc.lyric ? d.lrc.lyric : null;
+  } catch (e) { return null; }
+}
+function parseLrc(text) {
+  const arr = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s*\[(\d{1,2}):(\d{1,2}(?:\.\d{1,3})?)\](.*)$/);
+    if (m && m[3].replace(/<[^>]*>/g, "").trim()) {
+      arr.push({ t: (+m[1]) * 60 + parseFloat(m[2]), text: m[3].replace(/<[^>]*>/g, "").trim() });
+    }
+  }
+  return arr.sort((a, b) => a.t - b.t);
+}
+function colorize(text) {
+  const toks = text.split(/(\s+)/);
+  let ci = 0;
+  return toks.map(tok => {
+    if (!tok || /^\s+$/.test(tok)) return esc(tok);
+    const clean = tok.replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, "");
+    if (clean.length < 2) return esc(tok);
+    return "<b class='" + ["k1", "k2", "k3"][ci++ % 3] + "'>" + esc(tok) + "</b>";
+  }).join("");
+}
+function renderLrcLine(text) {
+  if (lyricEl) { lyricEl.remove(); lyricEl = null; }
+  if (!lyricMode || !text) return;
   lyricEl = document.createElement("div");
   lyricEl.className = "lyric-line";
-  lyricEl.innerHTML = DEMO_LYRICS[lyricIdx % DEMO_LYRICS.length];
+  lyricEl.innerHTML = text.indexOf("<b") >= 0 ? text : colorize(text);
   out.insertBefore(lyricEl, $("eq"));
   out.scrollTop = out.scrollHeight;
+}
+function syncLrc() {
+  if (!lrcLines.length || !state.seekable || !state.playing) return;
+  const t = audio.currentTime + 0.25;
+  if (lrcPtr >= lrcLines.length) return;
+  if (lrcLines[lrcPtr].t <= t) {
+    while (lrcPtr + 1 < lrcLines.length && lrcLines[lrcPtr + 1].t <= t) lrcPtr++;
+    renderLrcLine(lrcLines[lrcPtr].text);
+    lrcPtr++;
+  }
+}
+function nextLyric() {
+  renderLrcLine(DEMO_LYRICS[lyricIdx % DEMO_LYRICS.length]);
   lyricIdx++;
 }
-function startLyrics() { nextLyric(); clearInterval(lyricTimer); lyricTimer = setInterval(() => { if (state.playing) nextLyric(); }, 4200); }
-function stopLyrics() { clearInterval(lyricTimer); if (lyricEl) { lyricEl.remove(); lyricEl = null; } }
+async function startLyrics(track) {
+  stopLyrics();
+  lrcLines = []; lrcPtr = 0;
+  if (track && track.id && lyricMode) {
+    const lrc = await fetchLrc(track.id);
+    if (lrc) lrcLines = parseLrc(lrc);
+  }
+  if (lrcLines.length) {
+    toastLike("已加载逐行歌词 " + lrcLines.length + " 行", "ok");
+    renderLrcLine(lrcLines[0].text); lrcPtr = 1;
+  } else {
+    nextLyric();
+    lyricTimer = setInterval(() => { if (state.playing) nextLyric(); }, 4200);
+  }
+}
+function stopLyrics() {
+  clearInterval(lyricTimer); lyricTimer = null;
+  if (lyricEl) { lyricEl.remove(); lyricEl = null; }
+}
 
 /* ==================== 情绪引擎 ==================== */
 const MOODS = {
@@ -378,7 +464,14 @@ function loadTrack(i) {
   state.cur = (i + state.queue.length) % state.queue.length;
   const t = state.queue[state.cur];
   state.seekable = !!t.outer;
-  audio.src = t.outer || t.url || t.url_resolved;
+  const rawUrl = t.outer || t.url || t.url_resolved;
+  if (window.__CM_PROXY__ && /music\.163\.com|126\.net/.test(rawUrl)) {
+    audio.crossOrigin = "anonymous";
+    audio.src = window.__CM_PROXY__(rawUrl);
+  } else {
+    audio.crossOrigin = null;
+    audio.src = rawUrl;
+  }
   audio.volume = state.vol;
   audio.play().catch(() => {});
   document.querySelectorAll(".row").forEach(el => el.classList.remove("on"));
@@ -386,6 +479,7 @@ function loadTrack(i) {
   if (rows[state.cur]) { rows[state.cur].classList.add("on"); rows[state.cur].scrollIntoView({ block: "nearest" }); }
   $("np-line").innerHTML = "<b>" + esc(t.name) + "</b> — " + esc(t.artist || t.country || "");
   echo("<span class='p'>▶</span> 正在播放: <b>" + esc(t.name) + "</b> — " + esc(t.artist || t.country || ""), "");
+  startLyrics(t);
 }
 audio.addEventListener("playing", () => setPlayingUI(true));
 audio.addEventListener("pause", () => { if (!audio.ended) { state.playing = false; $("btn-play").textContent = "▶"; mascotAnim("sleep"); stopLyrics(); } });
@@ -398,6 +492,7 @@ audio.addEventListener("timeupdate", () => {
   if (!state.seekable || !audio.duration) return;
   $("p-fill").style.width = (audio.currentTime / audio.duration * 100) + "%";
   $("time-cur").textContent = fmt(audio.currentTime) + " / " + fmt(audio.duration);
+  syncLrc();
 });
 
 /* ==================== 搜索 ==================== */
@@ -506,6 +601,11 @@ function execCmd(raw) {
       break;
     }
     case "demo": state.queue = DEMO_TRACKS.slice(); renderRows(DEMO_TRACKS, false); loadTrack(0); break;
+    case "lyric":
+      lyricMode = !(arg === "off");
+      if (!lyricMode) stopLyrics();
+      toastLike("字幕显示: " + (lyricMode ? "开" : "关"), "ok");
+      break;
     case "help":
       echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · pause · vol 0-100 · mood auto|欢快|平静|忧郁|高潮 · demo · clear", "dim"); break;
     default: doPlay(s);
@@ -520,6 +620,22 @@ document.addEventListener("keydown", (e) => {
   }
 });
 setTimeout(() => echo("<span class='p'>Claude:</span> 嗨，我是你的音乐搭子。放一首歌试试？", "dim"), 700);
+
+/* ==================== 内置工具 API（供扩展/调试） ==================== */
+/* window.ClaudeTools.mood  — 情绪分析: get()/set()/list()
+   window.ClaudeTools.lyric — 字幕引擎: fetchLrc/parseLrc/colorize/syncLrc */
+window.ClaudeTools = {
+  mood: {
+    get: () => ({ mood: moodCur, auto: moodAuto, name: MOODS[moodCur].name }),
+    set: (k) => execCmd("mood " + k),
+    auto: (v) => { moodAuto = !!v; },
+  },
+  lyric: {
+    fetchLrc, parseLrc, colorize,
+    toggle: (v) => execCmd("lyric " + (v ? "on" : "off")),
+  },
+  env: () => ({ tauri: window.__CM_IS_TAURI__ }),
+};
 </script>
 </body>
 </html>
