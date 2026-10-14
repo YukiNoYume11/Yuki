@@ -241,11 +241,12 @@
   const IS_TAURI = !!(window.__TAURI_INTERNALS__ || window.__TAURI__);
   const NETEASE_RE = /music\.163\.com|126\.net/;
   if (IS_TAURI) {
-    const P = "http://proxy.localhost/";
+    const P = "http://proxy.localhost/?u=";
     const origFetch = window.fetch.bind(window);
     window.fetch = function (input, init) {
       const u = typeof input === "string" ? input : input && input.url;
       if (u && NETEASE_RE.test(u)) return origFetch(P + encodeURIComponent(u), init);
+      if (u && /qq\.com/.test(u)) return origFetch(P + encodeURIComponent(u), init);
       return origFetch(input, init);
     };
     window.__CM_PROXY__ = function (u) {
@@ -505,13 +506,57 @@ async function neteaseSearch(q) {
   try {
     const r = await fetch("https://music.163.com/api/search/get?s=" + encodeURIComponent(q) + "&type=1&limit=25", { signal: AbortSignal.timeout(6000) });
     const d = await r.json();
-    return ((d.result && d.result.songs) || []).map(s => ({
-      id: s.id, name: s.name,
+    let songs = ((d.result && d.result.songs) || []).map(s => ({
+      id: s.id, name: s.name, src: "netease",
       artist: (s.artists || []).map(a => a.name).join("/"),
       album: s.album ? s.album.name : "",
       outer: "https://music.163.com/song/media/outer/url?id=" + s.id + ".mp3",
     }));
+    // 模糊兜底: 主搜索为空时走 suggest 接口(对拼写残缺更宽容)
+    if (!songs.length) {
+      const r2 = await fetch("https://music.163.com/api/search/suggest/web?s=" + encodeURIComponent(q), { signal: AbortSignal.timeout(6000) });
+      const d2 = await r2.json();
+      songs = ((d2.result && d2.result.songs) || []).map(s => ({
+        id: s.id, name: s.name, src: "netease",
+        artist: (s.artists || []).map(a => a.name).join("/"),
+        album: s.album ? s.album.name : "",
+        outer: "https://music.163.com/song/media/outer/url?id=" + s.id + ".mp3",
+      }));
+      if (songs.length) toastLike("精确匹配为空，已用模糊匹配 " + songs.length + " 首", "dim");
+    }
+    return songs;
   } catch (e) { return null; }
+}
+
+/* QQ 音乐搜索(免登录可搜, 播放需登录) */
+async function qqSearch(q) {
+  try {
+    const r = await fetch("https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w=" + encodeURIComponent(q) + "&format=json&n=15", { signal: AbortSignal.timeout(6000) });
+    const d = await r.json();
+    return (((d.data || {}).song || {}).list || []).map(s => ({
+      name: s.songname, src: "qq",
+      artist: (s.singer || []).map(a => a.name).join("/"),
+      album: s.albumname || "",
+      vip: (s.pay || {}).payplay !== 0,
+    }));
+  } catch (e) { return []; }
+}
+
+/* 模糊相关度: 子序列匹配(不要求连续), 前缀/完整命中加分 */
+function fuzzyScore(needle, hay) {
+  const n = needle.toLowerCase().replace(/\s+/g, ""), h = hay.toLowerCase();
+  if (!n) return 0;
+  if (h.includes(n)) return 100 + (h.startsWith(n) ? 20 : 0) - Math.min(30, h.indexOf(n));
+  let i = 0;
+  for (const ch of h) { if (ch === n[i]) i++; if (i >= n.length) break; }
+  return i >= n.length ? 40 - (h.length - n.length) * 0.1 : -1;
+}
+function rankByRelevance(q, list) {
+  return list
+    .map(s => ({ s, v: Math.max(fuzzyScore(q, s.name + " " + s.artist), fuzzyScore(q, s.artist + " " + s.name)) }))
+    .filter(x => x.v >= 0)
+    .sort((a, b) => b.v - a.v)
+    .map(x => x.s);
 }
 async function radioSearch(q) {
   try {
@@ -525,26 +570,51 @@ async function radioSearch(q) {
 function renderRows(list, isRadio) {
   document.querySelectorAll("#out .row").forEach(el => el.remove());
   list.forEach((t, i) => {
+    const tag = isRadio ? "● LIVE" : (t.src === "qq" ? "QQ·需登录" : "网易 MP3");
     const d = document.createElement("div");
     d.className = "row"; d.dataset.i = i;
-    d.innerHTML = '<span class="idx">' + String(i+1).padStart(2,"0") + '</span><span class="nm">' + esc(t.name) + '</span><span class="ar">' + esc(t.artist || "") + '</span><span class="tg' + (isRadio ? " live" : "") + '">' + (isRadio ? "● LIVE" : "MP3") + '</span>';
-    d.addEventListener("click", () => loadTrack(i));
+    d.innerHTML = '<span class="idx">' + String(i+1).padStart(2,"0") + '</span><span class="nm">' + esc(t.name) + '</span><span class="ar">' + esc(t.artist || "") + '</span><span class="tg' + (isRadio ? " live" : "") + '">' + tag + '</span>';
+    d.addEventListener("click", () => {
+      if (t.src === "qq") { echo("<span class='p'>⏺</span> QQ 音乐播放需先登录（登录功能开发中），先听网易云版本吧", "err"); return; }
+      loadTrack(i);
+    });
     out.insertBefore(d, $("eq"));
   });
   out.scrollTop = out.scrollHeight;
 }
 async function doPlay(q) {
-  toastLike("搜索「" + q + "」…");
-  const songs = await neteaseSearch(q);
+  toastLike("模糊搜索「" + q + "」…");
+  let songs = await neteaseSearch(q);
+  if (songs === null) echo("<span class='p'>⏺</span> 网易云搜索通道异常（可输入 diag 自检）", "err");
+  if (songs && songs.length) songs = rankByRelevance(q, songs);
   if (songs && songs.length) {
-    toastLike("网易云 → " + songs.length + " 首", "ok");
-    state.queue = songs; renderRows(songs, false); loadTrack(0); return;
+    const qq = await qqSearch(q);
+    const merged = songs.concat(rankByRelevance(q, qq).slice(0, 8));
+    state.queue = merged; renderRows(merged, false); loadTrack(0);
+    return;
   }
   const radios = await radioSearch(q);
   if (radios.length) {
-    toastLike(songs === null ? "浏览器直连受限，切电台模式（Tauri 版可解锁完整网易云）" : "没找到歌曲，为你找到相关电台", "dim");
+    toastLike(songs === null ? "搜索通道受限，切电台模式" : "没找到歌曲，为你找到相关电台", "dim");
     state.queue = radios; renderRows(radios, true); loadTrack(0);
   } else { echo("<span class='p'>⏺</span> 没找到「" + esc(q) + "」", "err"); }
+}
+async function doDiag() {
+  echo("<span class='p'>diag</span> 运行环境: " + (window.__CM_IS_TAURI__ ? "Tauri 桌面版" : "浏览器预览"));
+  try {
+    const r = await fetch("https://music.163.com/api/search/get?s=test&type=1&limit=1");
+    const j = await r.json();
+    echo("网易云搜索通道: " + (j.result ? "正常" : "异常 code=" + j.code), j.result ? "ok" : "err");
+  } catch (e) { echo("网易云搜索通道: 失败 " + esc(String(e)), "err"); }
+  try {
+    const r2 = await fetch("https://music.163.com/song/media/outer/url?id=400876427.mp3");
+    echo("音频外链通道: HTTP " + r2.status, r2.ok ? "ok" : "err");
+  } catch (e) { echo("音频外链通道: 失败 " + esc(String(e)), "err"); }
+  try {
+    const r3 = await fetch("https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w=test&format=json&n=1");
+    const j3 = await r3.json();
+    echo("QQ搜索通道: " + (j3.code === 0 ? "正常" : "异常 code=" + j3.code), j3.code === 0 ? "ok" : "err");
+  } catch (e) { echo("QQ搜索通道: 失败 " + esc(String(e)), "err"); }
 }
 async function doRadio(q) {
   toastLike("搜索电台「" + q + "」…");
@@ -601,13 +671,14 @@ function execCmd(raw) {
       break;
     }
     case "demo": state.queue = DEMO_TRACKS.slice(); renderRows(DEMO_TRACKS, false); loadTrack(0); break;
+    case "diag": doDiag(); break;
     case "lyric":
       lyricMode = !(arg === "off");
       if (!lyricMode) stopLyrics();
       toastLike("字幕显示: " + (lyricMode ? "开" : "关"), "ok");
       break;
     case "help":
-      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · pause · vol 0-100 · mood auto|欢快|平静|忧郁|高潮 · demo · clear", "dim"); break;
+      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · pause · vol 0-100 · mood auto|欢快|平静|忧郁|高潮 · lyric on|off · demo · diag · clear", "dim"); break;
     default: doPlay(s);
   }
 }

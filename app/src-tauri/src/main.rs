@@ -9,21 +9,21 @@ use tauri::http::{Response, StatusCode};
 
 const MAX_BODY: u64 = 48 * 1024 * 1024; // 48MB 上限(网易云 mp3 约 3-10MB)
 
-fn handle_proxy(path_enc: &str) -> Response<Vec<u8>> {
-    let target = urlencoding::decode(path_enc)
-        .map(|c| c.into_owned())
-        .unwrap_or_default();
-
+fn handle_proxy(target: String) -> Response<Vec<u8>> {
     let allowed = url::Url::parse(&target)
         .ok()
         .and_then(|u| u.host_str().map(|h| h.to_string()))
-        .map(|h| h.ends_with("163.com") || h.ends_with("126.net"))
+        .map(|h| {
+            h.ends_with("163.com")
+                || h.ends_with("126.net")
+                || h.ends_with("qq.com")
+        })
         .unwrap_or(false);
 
     if !allowed {
         return Response::builder()
             .status(StatusCode::FORBIDDEN)
-            .body(b"host not allowed".to_vec())
+            .body(format!("host not allowed: {target}").into_bytes())
             .unwrap();
     }
 
@@ -41,7 +41,13 @@ fn handle_proxy(path_enc: &str) -> Response<Vec<u8>> {
         }
     };
 
-    match client.get(&target).send() {
+    let mut req = client.get(&target);
+    // QQ 音乐接口需要 Referer 才返回数据
+    if target.contains("qq.com") {
+        req = req.header("Referer", "https://y.qq.com/");
+    }
+
+    match req.send() {
         Ok(resp) => {
             let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::OK);
             let ct = resp
@@ -70,16 +76,29 @@ fn handle_proxy(path_enc: &str) -> Response<Vec<u8>> {
 fn main() {
     tauri::Builder::default()
         .register_uri_scheme_protocol("proxy", |_ctx, request| {
-            let uri = request.uri().to_string();
-            // Windows 下形如 http://proxy.localhost/<urlencoded-target>
-            let enc = uri
-                .split("proxy.localhost/")
-                .nth(1)
-                .unwrap_or("")
-                .split('?')
-                .next()
-                .unwrap_or("");
-            handle_proxy(enc)
+            let uri = request.uri().clone();
+            // 首选: http://proxy.localhost/?u=<urlencoded-target>
+            // 兼容: http://proxy.localhost/<urlencoded-target> (部分 WebView 会改写路径)
+            let mut target = String::new();
+            if let Some(q) = uri.query() {
+                if let Some(rest) = q.strip_prefix("u=") {
+                    target = urlencoding::decode(rest)
+                        .map(|c| c.into_owned())
+                        .unwrap_or_default();
+                }
+            }
+            if target.is_empty() {
+                let raw = uri.path().trim_start_matches('/');
+                let dec = urlencoding::decode(raw)
+                    .map(|c| c.into_owned())
+                    .unwrap_or_default();
+                if dec.starts_with("http") {
+                    target = dec;
+                } else if raw.starts_with("http") {
+                    target = raw.to_string();
+                }
+            }
+            handle_proxy(target)
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
