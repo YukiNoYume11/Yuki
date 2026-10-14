@@ -81,7 +81,7 @@
     color: var(--text); text-shadow: 0 2px 8px rgba(0,0,0,.7); line-height: 1.45;
   }
   #subtitle-text .k1 { color: var(--k1); }
-  #subtitle-text .k2 { color: var(--k2); background: rgba(217,119,87,.14); padding: 0 6px; border-radius: 4px; }
+  #subtitle-text .k2 { color: var(--k2); }
   #subtitle-text .k3 { color: var(--k3); }
   html[data-mood="excited"] #subtitle-text, html[data-mood="peak"] #subtitle-text { animation: bin .4s cubic-bezier(.2,1.6,.4,1); }
   html[data-mood="peak"] #subtitle-text .k2 { display: inline-block; animation: kw .5s ease-in-out infinite alternate; }
@@ -94,7 +94,7 @@
   #subtitle-src { font-size: 10px; color: var(--faint); margin-top: 6px; letter-spacing: 1px; }
 
   /* 频谱条(字幕层上方) */
-  .eq { position: absolute; left: 0; right: 0; bottom: 96px; height: 40px; display: flex; align-items: flex-end; gap: 3px; opacity: .5; pointer-events: none; }
+  .eq { position: absolute; left: 0; right: 0; bottom: 96px; height: 40px; display: flex; align-items: flex-end; gap: 3px; opacity: .65; pointer-events: none; }
   .eq i { flex: 1; background: var(--accent); border-radius: 1px 1px 0 0; height: 6%; min-width: 2px; transition: height .08s linear; }
 
   /* ===== 播放条 ===== */
@@ -149,7 +149,7 @@
   #cm-mascot svg { filter: drop-shadow(0 3px 4px rgba(0,0,0,.45)); }
   #cm-bubble {
     position: absolute; bottom: calc(100% + 10px); left: 60%;
-    min-width: 60px; max-width: 240px;
+    width: max-content; max-width: 260px;
     background: var(--panel2); border: 1.5px solid var(--accent-dim); color: var(--text);
     padding: 7px 11px; border-radius: 10px; font-size: 12px; font-family: var(--mono);
     line-height: 1.5; white-space: normal; opacity: 0; transform: translateY(6px) scale(.92);
@@ -163,6 +163,9 @@
     border-right: 1.5px solid var(--accent-dim); border-bottom: 1.5px solid var(--accent-dim);
     transform: rotate(45deg);
   }
+  /* 形象靠右时气泡向左展开, 避免溢出窗口 */
+  #cm-mascot.flip #cm-bubble { left: auto; right: 60%; }
+  #cm-mascot.flip #cm-bubble::after { left: auto; right: 18px; transform: rotate(-135deg); }
 
   /* 像素形象动画 */
   .mascot .armL, .mascot .armR, .mascot .legL, .mascot .legR { transition: transform .15s; }
@@ -231,12 +234,15 @@
 
     <div class="player">
       <div class="prow" id="progress-widget">
+        <button class="btn" id="btn-rw" title="快退10秒">◂◂</button>
         <button class="btn" id="btn-prev" title="上一首">|◀</button>
         <button class="btn main" id="btn-play" title="播放/暂停">▶</button>
         <button class="btn" id="btn-next" title="下一首">▶|</button>
+        <button class="btn" id="btn-ff" title="快进10秒">▸▸</button>
         <span class="np" id="np-line">未在播放</span>
         <div class="pbar" id="progress-bar"><div class="tr"><div class="fl" id="p-fill"></div></div></div>
         <span class="tm" id="time-cur">0:00 / 0:00</span>
+        <button class="btn" id="btn-speed" title="倍速(点击循环)" style="width:auto;padding:0 7px;font-size:10px">1.0x</button>
         <div class="vol" id="vol-widget">
           <span class="lb">VOL</span>
           <div class="pbar" id="vol-bar"><div class="tr"><div class="fl" id="v-fill" style="width:80%"></div></div></div>
@@ -349,12 +355,16 @@ const audio = $("audio");
 const state = { queue: [], cur: -1, seekable: false, vol: 0.8, playing: false };
 
 /* 音频事件黑匣子 */
+let analyserLogged = false;
 ["play", "playing", "canplay", "loadeddata", "stalled", "waiting", "error", "pause", "ended"].forEach(ev =>
   audio.addEventListener(ev, () => {
     if (ev === "error") {
       const err = audio.error;
       window.cmLog && window.cmLog("AUDIO_ERROR code=" + (err && err.code) + " msg=" + (err && err.message) + " src=" + (audio.currentSrc || "").slice(0, 100));
-    } else window.cmLog && window.cmLog("AUDIO " + ev + " t=" + audio.currentTime.toFixed(1));
+    } else {
+      window.cmLog && window.cmLog("AUDIO " + ev + " t=" + audio.currentTime.toFixed(1));
+      if (ev === "playing" && !analyserLogged) { analyserLogged = true; window.cmLog && window.cmLog("ANALYSER tainted=" + tainted + " (false=实时频谱可用)"); }
+    }
   })
 );
 
@@ -392,6 +402,7 @@ function cmWalkTo(el, sayText) {
   if (Math.abs(cur - x) > 60) cmMascot.dataset.anim = "walk";
   cmMascot.style.left = x + "px";
   cmMascot.style.top = y + "px";
+  cmMascot.classList.toggle("flip", x > window.innerWidth - 300);
   el.classList.add("ui-hl");
   setTimeout(() => el.classList.remove("ui-hl"), 2200);
   setTimeout(() => { cmMascot.dataset.anim = state.playing ? MOODS[moodCur].anim : "idle"; }, 950);
@@ -456,11 +467,14 @@ function classify(rms, centroid, onsets) {
   else if (Date.now() - moodCandSince > 3000) { setMood(key); moodCand = null; }
 }
 function drawEQ(fq) {
-  const step = Math.floor(fq.length / eqEls.length);
-  for (let i = 0; i < eqEls.length; i++) {
-    let v = 0;
-    for (let j = 0; j < step; j++) v = Math.max(v, fqBuf[i * step + j]);
-    eqEls[i].style.height = Math.max(6, v / 255 * 100) + "%";
+  /* 对数分组: 低频细划分、高频粗划分, 呈现真实频谱能量分布 */
+  const n = eqEls.length;
+  for (let i = 0; i < n; i++) {
+    const lo = Math.floor(Math.pow(fq.length, i / n));
+    const hi = Math.max(lo + 1, Math.floor(Math.pow(fq.length, (i + 1) / n)));
+    let v = 0, c = 0;
+    for (let j = lo; j < hi && j < fq.length; j++) { v += fqBuf[j]; c++; }
+    eqEls[i].style.height = Math.max(6, (c ? v / c : 0) / 255 * 100) + "%";
   }
 }
 function moodLoop() {
@@ -476,7 +490,11 @@ function moodLoop() {
     fluxHist.push(rms); if (fluxHist.length > 43) fluxHist.shift();
     const onsets = fluxHist.filter((v, i, a) => i > 0 && v - a[i-1] > 0.02).length / (fluxHist.length / 20);
     if (allZero && rms < 0.001) tainted = true;
-    else { classify(rms, centroid, onsets); drawEQ(fqBuf); }
+    else {
+      classify(rms, centroid, onsets);
+      drawEQ(fqBuf);
+      if ($("mood-src").textContent !== "(实时频谱)") $("mood-src").textContent = "(实时频谱)";
+    }
   }
   if (state.playing && (tainted || !analyser)) {
     synthPhase += 0.09;
@@ -524,15 +542,12 @@ function parseLrc(text) {
   }
   return arr.sort((a, b) => a.t - b.t);
 }
+/* 情绪词染色: 只给"情绪明显的词"上色, 其余保持素色 */
+const LEXICON = ["恋爱","爱人","心动","心跳","心事","思念","想念","怀念","温柔","孤独","寂寞","拥抱","亲吻","离别","重逢","遇见","相遇","阳光","月光","星空","星星","夜晚","夜色","黄昏","黎明","晚风","风雨","雨滴","花开","花落","大海","海浪","天空","晴天","回忆","记忆","时光","岁月","青春","远方","旅途","流浪","自由","勇敢","微笑","哭泣","温暖","燃烧","奔跑","寻找","等待","希望","失望","幸福","快乐","悲伤","欢喜","眼泪","泪光","梦想","痴心","孤单","爱","心","梦","泪","风","雨","花","海","笑","哭","醉","醒","光","暗"];
+const LEX_RE = new RegExp("(" + LEXICON.slice().sort((a, b) => b.length - a.length).join("|") + ")", "g");
 function colorize(text) {
-  const toks = text.split(/(\s+)/);
   let ci = 0;
-  return toks.map(tok => {
-    if (!tok || /^\s+$/.test(tok)) return esc(tok);
-    const clean = tok.replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, "");
-    if (clean.length < 2) return esc(tok);
-    return "<b class='" + ["k1", "k2", "k3"][ci++ % 3] + "'>" + esc(tok) + "</b>";
-  }).join("");
+  return esc(text).replace(LEX_RE, (m) => "<b class='" + ["k1", "k2", "k3"][ci++ % 3] + "'>" + m + "</b>");
 }
 function renderSubtitle(html, srcLabel) {
   $("subtitle-text").innerHTML = html;
@@ -775,6 +790,32 @@ $("btn-play").addEventListener("click", () => {
 $("btn-next").addEventListener("click", () => { if (state.queue.length) { loadTrack(state.cur + 1); cmWalkTo($("btn-next")); } });
 $("btn-prev").addEventListener("click", () => { if (state.queue.length) { loadTrack(state.cur - 1); cmWalkTo($("btn-prev")); } });
 
+/* 快进/快退/倍速 */
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+const SPEED_LABELS = ["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"];
+let speedIdx = 2;
+function setSpeed(idx) {
+  speedIdx = ((idx % SPEEDS.length) + SPEEDS.length) % SPEEDS.length;
+  audio.playbackRate = SPEEDS[speedIdx];
+  $("btn-speed").textContent = SPEED_LABELS[speedIdx];
+}
+$("btn-rw").addEventListener("click", () => {
+  if (state.seekable && audio.duration) {
+    audio.currentTime = Math.max(0, audio.currentTime - 10);
+    cmWalkTo($("progress-widget"), "快退 10 秒");
+  }
+});
+$("btn-ff").addEventListener("click", () => {
+  if (state.seekable && audio.duration) {
+    audio.currentTime = Math.min(audio.duration, audio.currentTime + 10);
+    cmWalkTo($("progress-widget"), "快进 10 秒");
+  }
+});
+$("btn-speed").addEventListener("click", () => {
+  setSpeed(speedIdx + 1);
+  cmWalkTo($("btn-speed"), "倍速 " + SPEED_LABELS[speedIdx]);
+});
+
 /* ==================== 命令 ==================== */
 function execCmd(raw) {
   const s = raw.trim(); if (!s) return;
@@ -802,10 +843,29 @@ function execCmd(raw) {
       else if (state.queue[state.cur]) loadLyrics(state.queue[state.cur]);
       cmSay("字幕已" + (lyricMode ? "开启" : "关闭"), 2600, true);
       break;
+    case "ff": {
+      const n = parseFloat(arg) || 10;
+      if (state.seekable && audio.duration) { audio.currentTime = Math.min(audio.duration, audio.currentTime + n); cmWalkTo($("progress-widget"), "快进 " + n + " 秒"); }
+      break;
+    }
+    case "rw": {
+      const n2 = parseFloat(arg) || 10;
+      if (state.seekable && audio.duration) { audio.currentTime = Math.max(0, audio.currentTime - n2); cmWalkTo($("progress-widget"), "快退 " + n2 + " 秒"); }
+      break;
+    }
+    case "speed": {
+      if (arg) {
+        const v = parseFloat(arg);
+        const i = SPEEDS.findIndex(s => Math.abs(s - v) < 0.01);
+        if (i >= 0) setSpeed(i); else { cmSay("可用倍速: " + SPEED_LABELS.join(" / "), 3200, true); break; }
+      } else setSpeed(speedIdx + 1);
+      cmWalkTo($("btn-speed"), "倍速 " + SPEED_LABELS[speedIdx]);
+      break;
+    }
     case "demo": state.queue = DEMO_TRACKS.slice(); renderRows(DEMO_TRACKS, false); loadTrack(0); break;
     case "diag": doDiag(); break;
     case "help":
-      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · pause · vol 0-100 · mood auto|欢快|平静|忧郁|高潮 · lyric on|off · demo · diag · clear", "dim"); break;
+      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · mood auto|欢快|平静|忧郁|高潮 · lyric on|off · demo · diag · clear", "dim"); break;
     case "clear":
       document.querySelectorAll("#out > .ln, #out > .row").forEach(el => el.remove());
       break;
