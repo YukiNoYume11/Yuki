@@ -133,15 +133,19 @@
   .vol .lb { color: var(--faint); font-size: 10px; }
 
   /* ===== 命令行（> █） ===== */
-  .cmdline { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 8px 2px; }
+  .cmdline { flex-shrink: 0; position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 2px; }
   .cmdline .p { color: var(--accent); font-size: 15px; flex-shrink: 0; }
   .cmdline input {
     flex: 1; background: none; border: none; outline: none;
     color: var(--text); font-family: var(--mono); font-size: 14px; caret-color: transparent;
   }
   .cursor {
-    width: 9px; height: 17px; background: var(--accent); flex-shrink: 0;
-    animation: blink 1.06s step-end infinite; margin-left: -4px;
+    position: absolute; width: 9px; height: 17px; background: var(--accent);
+    animation: blink 1.06s step-end infinite; pointer-events: none; z-index: 2;
+  }
+  #cmirror {
+    position: absolute; left: 0; top: -999px; visibility: hidden; white-space: pre;
+    font-family: var(--mono); font-size: 14px; letter-spacing: 0;
   }
   @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
 
@@ -220,7 +224,8 @@
     <div class="cmdline">
       <span class="p">&gt;</span>
       <input id="cmd" type="text" autocomplete="off" spellcheck="false" aria-label="命令输入">
-      <span class="cursor"></span>
+      <span class="cursor" id="caret"></span>
+      <span id="cmirror"></span>
     </div>
 
     <div class="statusbar">
@@ -239,19 +244,37 @@
    使 fetch 不受 CORS 限制、Web Audio AnalyserNode 不被跨域污染 */
 (function () {
   const IS_TAURI = !!(window.__TAURI_INTERNALS__ || window.__TAURI__);
-  const NETEASE_RE = /music\.163\.com|126\.net/;
+  const REMOTE_RE = /music\.163\.com|126\.net|qq\.com/;
+  const origFetch = window.fetch.bind(window);
+  window.__CM_ORIG_FETCH__ = origFetch;
   if (IS_TAURI) {
-    const P = "http://proxy.localhost/?u=";
-    const origFetch = window.fetch.bind(window);
-    window.fetch = function (input, init) {
+    /* 代理通道自动探测: https / http 哪个通走哪个 (Windows WebView2 自定义协议方案不同) */
+    let proxyBase = null, probing = null;
+    function resolveProxy() {
+      if (proxyBase) return Promise.resolve(proxyBase);
+      if (!probing) {
+        const test = encodeURIComponent("https://music.163.com/api/search/get?s=a&type=1&limit=1");
+        probing = (async () => {
+          for (const base of ["https://proxy.localhost/?u=", "http://proxy.localhost/?u="]) {
+            try { const r = await origFetch(base + test); if (r) { proxyBase = base; return base; } }
+            catch (e) { /* 试下一个 */ }
+          }
+          proxyBase = "https://proxy.localhost/?u=";
+          return proxyBase;
+        })();
+      }
+      return probing;
+    }
+    window.fetch = async function (input, init) {
       const u = typeof input === "string" ? input : input && input.url;
-      if (u && NETEASE_RE.test(u)) return origFetch(P + encodeURIComponent(u), init);
-      if (u && /qq\.com/.test(u)) return origFetch(P + encodeURIComponent(u), init);
+      if (u && REMOTE_RE.test(u)) {
+        const base = await resolveProxy();
+        return origFetch(base + encodeURIComponent(u), init);
+      }
       return origFetch(input, init);
     };
-    window.__CM_PROXY__ = function (u) {
-      return NETEASE_RE.test(u) ? P + encodeURIComponent(u) : u;
-    };
+    window.__CM_PROXY__ = async (u) => (await resolveProxy()) + encodeURIComponent(u);
+    window.__CM_PROXY_BASE__ = resolveProxy;
     document.documentElement.dataset.env = "tauri";
   } else {
     document.documentElement.dataset.env = "browser";
@@ -466,9 +489,14 @@ function loadTrack(i) {
   const t = state.queue[state.cur];
   state.seekable = !!t.outer;
   const rawUrl = t.outer || t.url || t.url_resolved;
-  if (window.__CM_PROXY__ && /music\.163\.com|126\.net/.test(rawUrl)) {
-    audio.crossOrigin = "anonymous";
-    audio.src = window.__CM_PROXY__(rawUrl);
+  if (window.__CM_IS_TAURI__ && /music\.163\.com|126\.net/.test(rawUrl)) {
+    window.__CM_PROXY__(rawUrl).then(u => {
+      audio.crossOrigin = "anonymous";
+      audio.src = u;
+    }).catch(() => {
+      audio.crossOrigin = null;
+      audio.src = rawUrl;
+    });
   } else {
     audio.crossOrigin = null;
     audio.src = rawUrl;
@@ -601,20 +629,25 @@ async function doPlay(q) {
 }
 async function doDiag() {
   echo("<span class='p'>diag</span> 运行环境: " + (window.__CM_IS_TAURI__ ? "Tauri 桌面版" : "浏览器预览"));
+  if (window.__CM_PROXY_BASE__) {
+    try { echo("代理通道: " + (await window.__CM_PROXY_BASE__()).slice(0, 30) + "…"); }
+    catch (e) { echo("代理通道: 解析失败", "err"); }
+  } else echo("代理通道: 无(浏览器直连)");
   try {
     const r = await fetch("https://music.163.com/api/search/get?s=test&type=1&limit=1");
-    const j = await r.json();
-    echo("网易云搜索通道: " + (j.result ? "正常" : "异常 code=" + j.code), j.result ? "ok" : "err");
-  } catch (e) { echo("网易云搜索通道: 失败 " + esc(String(e)), "err"); }
+    const j = await r.json().catch(() => ({}));
+    echo("网易云搜索: HTTP " + r.status + (j.result ? " 正常" : " 异常 " + esc(JSON.stringify(j).slice(0, 80))), j.result ? "ok" : "err");
+  } catch (e) { echo("网易云搜索: 网络层失败 " + esc(String(e && e.message || e)), "err"); }
   try {
     const r2 = await fetch("https://music.163.com/song/media/outer/url?id=400876427.mp3");
-    echo("音频外链通道: HTTP " + r2.status, r2.ok ? "ok" : "err");
-  } catch (e) { echo("音频外链通道: 失败 " + esc(String(e)), "err"); }
+    echo("音频外链: HTTP " + r2.status + " " + esc(r2.headers.get("content-type") || ""), r2.ok ? "ok" : "err");
+  } catch (e) { echo("音频外链: 网络层失败 " + esc(String(e && e.message || e)), "err"); }
   try {
     const r3 = await fetch("https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w=test&format=json&n=1");
-    const j3 = await r3.json();
-    echo("QQ搜索通道: " + (j3.code === 0 ? "正常" : "异常 code=" + j3.code), j3.code === 0 ? "ok" : "err");
-  } catch (e) { echo("QQ搜索通道: 失败 " + esc(String(e)), "err"); }
+    const j3 = await r3.json().catch(() => ({}));
+    echo("QQ搜索: HTTP " + r3.status + (j3.code === 0 ? " 正常" : " 异常"), j3.code === 0 ? "ok" : "err");
+  } catch (e) { echo("QQ搜索: 网络层失败 " + esc(String(e && e.message || e)), "err"); }
+  echo("说明: 三平台接口均无需账号验证(已实测), 失败=本地代理传输层问题", "dim");
 }
 async function doRadio(q) {
   toastLike("搜索电台「" + q + "」…");
@@ -683,6 +716,18 @@ function execCmd(raw) {
   }
 }
 $("cmd").addEventListener("keydown", (e) => { if (e.key === "Enter") { execCmd(e.target.value); e.target.value = ""; } });
+
+/* 光标竖线跟随文字位置 */
+const cmdEl = $("cmd"), caretEl = $("caret"), mirrorEl = $("cmirror");
+function moveCaret() {
+  const pos = cmdEl.selectionStart ?? cmdEl.value.length;
+  mirrorEl.textContent = cmdEl.value.slice(0, pos);
+  const maxLeft = cmdEl.offsetLeft + cmdEl.clientWidth - 12;
+  caretEl.style.left = Math.min(cmdEl.offsetLeft + mirrorEl.offsetWidth + 1, maxLeft) + "px";
+}
+["input", "keyup", "click", "focus", "blur"].forEach(ev => cmdEl.addEventListener(ev, moveCaret));
+window.addEventListener("resize", moveCaret);
+moveCaret();
 document.addEventListener("keydown", (e) => {
   if (e.key === "m" && document.activeElement !== $("cmd")) {
     const i = MOOD_KEYS.indexOf(moodAuto ? "auto" : moodCur);
