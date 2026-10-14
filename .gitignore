@@ -1,0 +1,6 @@
+# 临时与构建产物
+node_modules/
+target/
+dist/
+*.log
+.toolchain-tmp/
