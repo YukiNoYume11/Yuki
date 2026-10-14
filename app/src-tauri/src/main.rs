@@ -42,7 +42,7 @@ fn handle_proxy(path_enc: &str) -> Response<Vec<u8>> {
     };
 
     match client.get(&target).send() {
-        Ok(mut resp) => {
+        Ok(resp) => {
             let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::OK);
             let ct = resp
                 .headers()
