@@ -69,16 +69,19 @@
   .row .tg.live { color: var(--accent); }
 
   /* ===== 可视化条带(固定高度, 不随输出区滚动) ===== */
-  .viz-strip { flex-shrink: 0; position: relative; height: 118px; overflow: hidden; border-top: 1px solid var(--border); background: var(--win); }
-  .eq { position: absolute; left: 0; right: 0; bottom: 0; height: 100%; display: flex; align-items: flex-end; gap: 3px; opacity: .65; pointer-events: none; }
-  .eq i { flex: 1; background: var(--accent); border-radius: 1px 1px 0 0; height: 6%; min-width: 2px; transition: height .08s linear; }
+  .viz-strip {
+    flex-shrink: 0; position: relative; height: 118px; overflow: hidden;
+    border-top: 1px solid var(--border);
+    background: linear-gradient(to top, rgba(18,16,14,.95) 45%, rgba(18,16,14,0));
+  }
+  .eq { position: absolute; left: 0; right: 0; bottom: 0; height: 100%; display: flex; align-items: flex-end; gap: 3px; opacity: .75; pointer-events: none; z-index: 1; }
+  .eq i { flex: 1; background: var(--accent); border-radius: 1px 1px 0 0; height: 6%; min-width: 2px; transition: height .07s linear; }
 
-  /* ===== 独立字幕层(MV式, 固定于可视化条带内) ===== */
+  /* ===== 独立字幕层(纯文字, 不遮频谱) ===== */
   #subtitle-layer {
-    position: absolute; inset: 0; z-index: 5;
+    position: absolute; inset: 0; z-index: 2;
     display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
     padding: 8px 24px 10px; pointer-events: none;
-    background: linear-gradient(to top, rgba(18,16,14,.95) 45%, rgba(18,16,14,0));
   }
   #subtitle-text {
     font-size: 27px; font-weight: 500; letter-spacing: 2px; text-align: center;
@@ -465,7 +468,10 @@ let songStats = { min: Infinity, max: 0, sum: 0, n: 0 };
 function resetSongStats() { songStats = { min: Infinity, max: 0, sum: 0, n: 0 }; }
 function classify(rms, centroid, onsets) {
   const st = songStats;
-  st.min = Math.min(st.min, rms); st.max = Math.max(st.max, rms); st.sum += rms; st.n++;
+  /* 去极值: 单帧能量超过当前均值4倍时按均值4倍截断, 防止尖峰污染统计 */
+  const mean = st.n > 0 ? st.sum / st.n : 0;
+  const clamped = (st.n > 20 && mean > 0 && rms > mean * 4) ? mean * 4 : rms;
+  st.min = Math.min(st.min, clamped); st.max = Math.max(st.max, clamped); st.sum += clamped; st.n++;
   let key;
   if (st.n < 40 || st.max < 0.05) {
     key = "calm"; // 开头2秒热身: 统计不足时先判平静
@@ -912,32 +918,32 @@ setInterval(() => {
   }
 }, 55000);
 
-/* 方向键: 左退5s / 右进5s(单击); 长按右=2倍速播放, 长按左=持续快退 */
-let holdTimer = null, holding = false, savedRate = 1, holdDir = 0, holdInterval = null;
+/* 方向键: 单击=±5s(松开才执行); 长按右=2倍速, 长按左=持续快退(不再先跳5秒) */
+let holdTimer = null, holding = false, savedRate = 1, holdDir = 0, holdInterval = null, pendingTap = null;
 document.addEventListener("keydown", (e) => {
   if (document.activeElement === cmdEl || !state.seekable) return;
   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
   e.preventDefault();
-  if (holding) return;
+  if (holding || pendingTap) return;
   if (!e.repeat) {
-    const d = e.key === "ArrowRight" ? 5 : -5;
-    audio.currentTime = Math.max(0, Math.min(audio.duration || 0, audio.currentTime + d));
-    cmWalkTo($("progress-widget"), (d > 0 ? "快进 " : "快退 ") + 5 + " 秒");
-    holdTimer = setTimeout(() => {
-      holding = true;
-      holdDir = e.key === "ArrowRight" ? 1 : -1;
-      if (holdDir > 0) {
-        savedRate = audio.playbackRate;
-        audio.playbackRate = 2;
-        cmSay("2倍速快进中…", 1800, true);
-      } else {
-        cmSay("持续快退中…松开停止", 1800, true);
-        holdInterval = setInterval(() => { audio.currentTime = Math.max(0, audio.currentTime - 0.4); }, 100);
-      }
-      mascotSet("walk");
-    }, 380);
+    pendingTap = { dir: e.key === "ArrowRight" ? 1 : -1 };
+    holdTimer = setTimeout(() => { startHold(pendingTap.dir); pendingTap = null; }, 350);
   }
 });
+function startHold(dir) {
+  holding = true;
+  holdDir = dir;
+  cmWalkTo($("progress-widget"));
+  if (dir > 0) {
+    savedRate = audio.playbackRate;
+    audio.playbackRate = 2;
+    cmSay("2倍速快进中…", 1800, true);
+  } else {
+    cmSay("持续快退中…松开停止", 1800, true);
+    holdInterval = setInterval(() => { audio.currentTime = Math.max(0, audio.currentTime - 0.4); }, 100);
+  }
+  mascotSet("walk");
+}
 document.addEventListener("keyup", (e) => {
   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
   clearTimeout(holdTimer);
@@ -947,6 +953,11 @@ document.addEventListener("keyup", (e) => {
     else { clearInterval(holdInterval); holdInterval = null; }
     mascotSet(state.playing ? MOODS[moodCur].anim : "idle");
     cmSay("回到 " + SPEED_LABELS[speedIdx] + " 正常播放", 2000);
+  } else if (pendingTap) {
+    const d = pendingTap.dir * 5;
+    pendingTap = null;
+    audio.currentTime = Math.max(0, Math.min(audio.duration || 0, audio.currentTime + d));
+    cmWalkTo($("progress-widget"), (d > 0 ? "快进 " : "快退 ") + 5 + " 秒");
   }
 });
 
