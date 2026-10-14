@@ -4,10 +4,27 @@
 //! 核心能力: proxy 自定义协议 —— 把网易云 API/音频请求代理为同源请求,
 //! 解决 CORS 限制, 让前端 fetch 与 Web Audio 情绪分析(AnalyserNode)正常工作。
 
-use std::io::Read;
+use std::io::{Read, Write};
 use tauri::http::{Response, StatusCode};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_BODY: u64 = 48 * 1024 * 1024; // 48MB 上限(网易云 mp3 约 3-10MB)
+
+/// 前端黑匣子日志: 写入 D:/ClaudeMusic/logs/cm-debug.log, 便于离线诊断
+#[tauri::command]
+fn app_log(msg: String) {
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("D:/ClaudeMusic/logs/cm-debug.log")
+    {
+        let _ = writeln!(f, "[{}.{:03}] {}", ms / 1000, ms % 1000, msg);
+    }
+}
 
 fn handle_proxy(target: String) -> Response<Vec<u8>> {
     let allowed = url::Url::parse(&target)
@@ -74,7 +91,9 @@ fn handle_proxy(target: String) -> Response<Vec<u8>> {
 }
 
 fn main() {
+    let _ = std::fs::create_dir_all("D:/ClaudeMusic/logs");
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![app_log])
         .register_uri_scheme_protocol("proxy", |_ctx, request| {
             let uri = request.uri().clone();
             // 首选: http://proxy.localhost/?u=<urlencoded-target>

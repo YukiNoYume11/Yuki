@@ -5,3 +5,4 @@ dist/
 *.log
 .toolchain-tmp/
 toolchain/
+logs/

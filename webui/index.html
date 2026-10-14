@@ -142,7 +142,9 @@
   .cursor {
     position: absolute; width: 9px; height: 17px; background: var(--accent);
     animation: blink 1.06s step-end infinite; pointer-events: none; z-index: 2;
+    display: none;
   }
+  .cursor.on { display: block; }
   #cmirror {
     position: absolute; left: 0; top: -999px; visibility: hidden; white-space: pre;
     font-family: var(--mono); font-size: 14px; letter-spacing: 0;
@@ -269,7 +271,10 @@
       const u = typeof input === "string" ? input : input && input.url;
       if (u && REMOTE_RE.test(u)) {
         const base = await resolveProxy();
-        return origFetch(base + encodeURIComponent(u), init);
+        return origFetch(base + encodeURIComponent(u), init).catch(e => {
+          window.cmLog && window.cmLog("FETCH_ERR " + u.slice(0, 80) + " :: " + (e && e.message));
+          throw e;
+        });
       }
       return origFetch(input, init);
     };
@@ -280,6 +285,35 @@
     document.documentElement.dataset.env = "browser";
   }
   window.__CM_IS_TAURI__ = IS_TAURI;
+  /* 黑匣子: 关键事件写本地日志文件, 供离线诊断 */
+  window.cmLog = function (m) {
+    try { if (IS_TAURI && window.__TAURI_INTERNALS__) window.__TAURI_INTERNALS__.invoke("app_log", { msg: String(m).slice(0, 600) }); } catch (e) {}
+  };
+  if (IS_TAURI) {
+    /* 启动自检: 15s 后自动跑一遍通道测试并落盘 */
+    setTimeout(async () => {
+      window.cmLog("=== 启动自检开始 ===");
+      try {
+        const base = await window.__CM_PROXY_BASE__();
+        window.cmLog("代理通道选定: " + base);
+      } catch (e) { window.cmLog("代理通道选定失败: " + e); }
+      try {
+        const r = await fetch("https://music.163.com/api/search/get?s=test&type=1&limit=1");
+        const j = await r.json().catch(() => ({}));
+        window.cmLog("自检-搜索: HTTP " + r.status + " result=" + (j.result ? "yes" : JSON.stringify(j).slice(0, 100)));
+      } catch (e) { window.cmLog("自检-搜索: EXC " + (e && e.message)); }
+      try {
+        const r2 = await fetch("https://p2.music.126.net/6y-UleORITEDbvrOLV0Q8A==/5639395138885805.jpg");
+        window.cmLog("自检-CDN(126.net): HTTP " + r2.status + " ct=" + (r2.headers.get("content-type") || ""));
+      } catch (e) { window.cmLog("自检-CDN: EXC " + (e && e.message)); }
+      try {
+        const r3 = await fetch("https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w=test&format=json&n=1");
+        const j3 = await r3.json().catch(() => ({}));
+        window.cmLog("自检-QQ: HTTP " + r3.status + " code=" + j3.code);
+      } catch (e) { window.cmLog("自检-QQ: EXC " + (e && e.message)); }
+      window.cmLog("=== 启动自检结束 ===");
+    }, 1500);
+  }
 })();
 </script>
 <script>
@@ -287,6 +321,16 @@
 const $ = (id) => document.getElementById(id);
 const audio = $("audio");
 const state = { queue: [], cur: -1, seekable: false, vol: 0.8, playing: false };
+
+/* 音频事件黑匣子 */
+["play", "playing", "canplay", "loadeddata", "stalled", "waiting", "error", "pause", "ended"].forEach(ev =>
+  audio.addEventListener(ev, () => {
+    if (ev === "error") {
+      const err = audio.error;
+      window.cmLog && window.cmLog("AUDIO_ERROR code=" + (err && err.code) + " msg=" + (err && err.message) + " src=" + (audio.currentSrc || "").slice(0, 100));
+    } else window.cmLog && window.cmLog("AUDIO " + ev + " t=" + audio.currentTime.toFixed(1));
+  })
+);
 
 /* ==================== 终端输出 ==================== */
 const out = $("out");
@@ -380,6 +424,7 @@ async function startLyrics(track) {
   if (track && track.id && lyricMode) {
     const lrc = await fetchLrc(track.id);
     if (lrc) lrcLines = parseLrc(lrc);
+    window.cmLog && window.cmLog("LRC id=" + track.id + " lines=" + lrcLines.length);
   }
   if (lrcLines.length) {
     toastLike("已加载逐行歌词 " + lrcLines.length + " 行", "ok");
@@ -489,6 +534,7 @@ function loadTrack(i) {
   const t = state.queue[state.cur];
   state.seekable = !!t.outer;
   const rawUrl = t.outer || t.url || t.url_resolved;
+  window.cmLog && window.cmLog("LOAD name=" + t.name + " src=" + rawUrl.slice(0, 100));
   if (window.__CM_IS_TAURI__ && /music\.163\.com|126\.net/.test(rawUrl)) {
     window.__CM_PROXY__(rawUrl).then(u => {
       audio.crossOrigin = "anonymous";
@@ -725,8 +771,10 @@ function moveCaret() {
   const maxLeft = cmdEl.offsetLeft + cmdEl.clientWidth - 12;
   caretEl.style.left = Math.min(cmdEl.offsetLeft + mirrorEl.offsetWidth + 1, maxLeft) + "px";
 }
-["input", "keyup", "click", "focus", "blur"].forEach(ev => cmdEl.addEventListener(ev, moveCaret));
+["input", "keyup", "click"].forEach(ev => cmdEl.addEventListener(ev, moveCaret));
 window.addEventListener("resize", moveCaret);
+cmdEl.addEventListener("focus", () => { caretEl.classList.add("on"); moveCaret(); });
+cmdEl.addEventListener("blur", () => caretEl.classList.remove("on"));
 moveCaret();
 document.addEventListener("keydown", (e) => {
   if (e.key === "m" && document.activeElement !== $("cmd")) {
