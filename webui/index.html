@@ -3,306 +3,266 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ClaudeMusic v0.2</title>
+<title>ClaudeMusic — claude — 120×40</title>
 <style>
   :root {
-    --bg: #1F1E1D; --panel: #282725; --panel2: #2E2D2A;
-    --border: #3D3B37; --text: #E8E6E3; --dim: #9C9993; --faint: #6B6963;
-    --accent: #D97757; --accent-dim: #B85C3D;
-    --sky1: #2E2A3A; --sky2: #4A3648; --sun: #F2B24C;
-    --k1: #F2B24C; --k2: #E86A5E; --k3: #7BAEC8;
+    --bg: #191817; --win: #1F1E1D; --panel: #262522; --panel2: #2C2B28;
+    --border: #3A3833; --text: #E8E6E3; --dim: #9C9993; --faint: #6B6963;
+    --accent: #D97757; --accent-dim: #B85C3D; --accent-dark: #8F4527;
+    --k1: #E8A87C; --k2: #E86A5E; --k3: #9AB8D8; --ok: #7BAE7F;
     --mono: ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace;
   }
-  html[data-mood="excited"] {
-    --sky1: #3A2333; --sky2: #C25A3A; --sun: #FFD27A;
-    --k1: #FFD27A; --k2: #FF6B4A; --k3: #FFB08A;
-  }
-  html[data-mood="peak"] {
-    --sky1: #4A1F2E; --sky2: #E86A4A; --sun: #FFE08A;
-    --k1: #FFE08A; --k2: #FF5540; --k3: #FFC9A0;
-  }
-  html[data-mood="calm"] {
-    --sky1: #2E2A3A; --sky2: #7A5470; --sun: #F2B24C;
-    --k1: #F2C98A; --k2: #E88A7A; --k3: #9AB8D8;
-  }
-  html[data-mood="melancholy"] {
-    --sky1: #1A2230; --sky2: #2E3D52; --sun: #8A93A8;
-    --k1: #9FB4CC; --k2: #7A8CA8; --k3: #62778F;
-  }
+  html[data-mood="excited"] { --accent: #E8825C; }
+  html[data-mood="peak"] { --accent: #F2906A; --k2: #FF5540; }
+  html[data-mood="calm"] { --accent: #D97757; }
+  html[data-mood="melancholy"] { --accent: #7E8CA0; --k1: #9FB4CC; --k2: #7A8CA8; --k3: #62778F; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; }
   body {
-    background: var(--bg); color: var(--text);
-    font-family: var(--mono); font-size: 13px;
-    display: flex; flex-direction: column; overflow: hidden;
-    transition: background .8s;
+    background: #0D0C0B; color: var(--text); font-family: var(--mono); font-size: 13px;
+    display: flex; align-items: stretch; justify-content: center; padding: 14px;
   }
   ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
-  header {
-    display: flex; align-items: center; gap: 10px;
-    padding: 10px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  /* ===== 终端窗口 ===== */
+  .term {
+    flex: 1; max-width: 1080px; display: flex; flex-direction: column;
+    background: var(--win); border: 1px solid #44413B; border-radius: 10px; overflow: hidden;
   }
-  header .logo-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
-  header h1 { font-size: 14px; font-weight: 500; }
-  header .mood-badge {
-    margin-left: auto; font-size: 11px; color: var(--dim);
-    border: 1px solid var(--border); padding: 3px 10px; border-radius: 12px;
+  .titlebar {
+    display: flex; align-items: center; padding: 8px 12px; gap: 8px;
+    background: #232220; border-bottom: 1px solid var(--border); flex-shrink: 0;
   }
-  header .mood-badge b { color: var(--accent); font-weight: 500; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot.r { background: #FF5F57; } .dot.y { background: #FEBC2E; } .dot.g { background: #28C840; }
+  .titlebar .t { flex: 1; text-align: center; color: var(--dim); font-size: 12px; }
 
-  main { flex: 1; display: flex; min-height: 0; }
-  .side {
-    width: 300px; flex-shrink: 0; border-right: 1px solid var(--border);
-    display: flex; flex-direction: column; min-height: 0;
-  }
-  .panel-head {
-    padding: 9px 14px; color: var(--dim); font-size: 12px;
-    border-bottom: 1px solid var(--border); background: var(--panel);
-  }
-  .list { flex: 1; overflow-y: auto; }
-  .item {
-    padding: 9px 14px; cursor: pointer; border-bottom: 1px solid #262522;
-    display: flex; align-items: center; gap: 10px;
-  }
-  .item:hover { background: var(--panel); }
-  .item.active { background: var(--panel2); border-left: 2px solid var(--accent); }
-  .item .t { flex: 1; min-width: 0; }
-  .item .t .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .item .t .sub { color: var(--faint); font-size: 11px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .item .tag { font-size: 10px; padding: 2px 6px; border-radius: 3px; flex-shrink: 0; border: 1px solid var(--border); color: var(--dim); }
-  .item .tag.live { border-color: var(--accent-dim); color: var(--accent); }
+  .term-body { flex: 1; display: flex; flex-direction: column; padding: 14px 18px 10px; min-height: 0; }
 
-  /* ===== 歌词舞台（MV 风格） ===== */
-  .content { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
-  .lyric-stage {
-    flex: 1; position: relative; overflow: hidden;
-    background: linear-gradient(to bottom, var(--sky1), var(--sky2));
-    transition: background 1.2s;
-    display: flex; align-items: center; justify-content: center;
+  /* ===== 欢迎框（Claude Code 同款） ===== */
+  .welcome {
+    border: 1.5px solid var(--accent); border-radius: 12px;
+    padding: 14px 18px; display: flex; align-items: center; gap: 20px;
+    flex-shrink: 0; background: rgba(217,119,87,.04);
   }
-  .scene { position: absolute; inset: 0; pointer-events: none; }
-  .sun { position: absolute; right: 12%; bottom: 26%; transition: all 1.5s; }
-  html[data-mood="melancholy"] .sun { bottom: 14%; filter: grayscale(.6) brightness(.7); }
-  html[data-mood="peak"] .sun { animation: sunpulse .5s ease-in-out infinite alternate; }
-  @keyframes sunpulse { from { transform: scale(1); } to { transform: scale(1.12); } }
-  .cloud { position: absolute; opacity: .5; animation: drift linear infinite; }
-  @keyframes drift { from { transform: translateX(-120px); } to { transform: translateX(860px); } }
-  .stars { position: absolute; inset: 0; opacity: 0; transition: opacity 1.5s; }
-  html[data-mood="melancholy"] .stars { opacity: .8; }
-  .mountains {
-    position: absolute; bottom: 0; left: 0; width: 100%; height: 22%;
-    background: #1A1614; clip-path: polygon(0 100%, 0 55%, 12% 30%, 24% 60%, 38% 25%, 52% 62%, 66% 35%, 80% 58%, 92% 28%, 100% 50%, 100% 100%);
-  }
+  .welcome .mascot-box { flex-shrink: 0; }
+  .welcome h1 { font-size: 22px; font-weight: 500; letter-spacing: .5px; color: var(--text); }
+  .welcome .meta { color: var(--dim); font-size: 13px; margin-top: 4px; }
+  .welcome .path { color: var(--faint); font-size: 13px; margin-top: 2px; }
+  .welcome .right { margin-left: auto; text-align: right; color: var(--faint); font-size: 11px; line-height: 1.9; flex-shrink: 0; }
+  .welcome .right b { color: var(--accent); font-weight: 500; }
 
-  .lyric-wrap { position: relative; text-align: center; padding: 0 40px; max-width: 90%; }
+  /* ===== 像素吉祥物（Claude Code 小螃蟹同款） ===== */
+  .mascot { display: inline-block; position: relative; }
+  .mascot .armL, .mascot .armR, .mascot .legL, .mascot .legR { transition: transform .15s; }
+  .mascot[data-anim="idle"] .body { animation: bob 2.6s ease-in-out infinite; }
+  @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-1px); } }
+  .mascot[data-anim="dance"] .armL { animation: wvL .38s ease-in-out infinite alternate; transform-origin: 6px 8px; }
+  .mascot[data-anim="dance"] .armR { animation: wvR .38s ease-in-out infinite alternate; transform-origin: 14px 8px; }
+  .mascot[data-anim="dance"] .legL { animation: stL .38s ease-in-out infinite alternate; transform-origin: 8px 12px; }
+  .mascot[data-anim="dance"] .legR { animation: stR .38s ease-in-out infinite alternate; transform-origin: 12px 12px; }
+  .mascot[data-anim="dance"] .body { animation: hop .38s ease-in-out infinite alternate; }
+  @keyframes wvL { from { transform: rotate(0); } to { transform: rotate(-40deg); } }
+  @keyframes wvR { from { transform: rotate(0); } to { transform: rotate(40deg); } }
+  @keyframes stL { from { transform: translateY(0); } to { transform: translateY(-1.2px) rotate(-16deg); } }
+  @keyframes stR { from { transform: translateY(-1.2px) rotate(16deg); } to { transform: translateY(0); } }
+  @keyframes hop { from { transform: translateY(0); } to { transform: translateY(-1.6px); } }
+  .mascot[data-anim="sleep"] .eye { transform: scaleY(.12); }
+  .mascot[data-anim="sleep"] .body { animation: bob 4s ease-in-out infinite; }
+  .zzz { position: absolute; top: -8px; right: -12px; color: var(--k3); font-size: 11px; opacity: 0; }
+  .mascot[data-anim="sleep"] .zzz { opacity: 1; animation: zf 2s ease-in-out infinite; }
+  @keyframes zf { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-10px); opacity: 0; } }
+
+  /* ===== 输出区（终端流） ===== */
+  .out { flex: 1; overflow-y: auto; padding: 12px 4px 6px; min-height: 0; position: relative; }
+  .ln { line-height: 1.75; white-space: pre-wrap; word-break: break-all; }
+  .ln .p { color: var(--accent); }
+  .ln.dim { color: var(--faint); }
+  .ln.ok { color: var(--ok); }
+  .ln.err { color: #E86A5E; }
+  .row { cursor: pointer; padding: 1px 8px; margin: 0 -8px; border-radius: 4px; display: flex; gap: 10px; align-items: baseline; }
+  .row:hover { background: var(--panel); }
+  .row.on { background: var(--panel2); }
+  .row .idx { color: var(--faint); flex-shrink: 0; width: 26px; text-align: right; }
+  .row .nm { color: var(--text); }
+  .row.on .nm { color: var(--accent); }
+  .row .ar { color: var(--faint); font-size: 12px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .tg { color: var(--faint); font-size: 11px; flex-shrink: 0; }
+  .row .tg.live { color: var(--accent); }
+
+  /* 歌词大字行（终端内 MV） */
   .lyric-line {
-    font-size: 34px; font-weight: 500; letter-spacing: 2px; line-height: 1.5;
-    text-shadow: 0 2px 0 rgba(0,0,0,.25);
+    text-align: center; font-size: 26px; font-weight: 500; letter-spacing: 2px;
+    padding: 18px 0 10px; color: var(--text);
   }
-  html[data-mood="excited"] .lyric-line, html[data-mood="peak"] .lyric-line { animation: bounceIn .45s cubic-bezier(.2,1.6,.4,1); }
-  html[data-mood="calm"] .lyric-line { animation: fadeUp .8s ease; }
-  html[data-mood="melancholy"] .lyric-line { animation: floatUp 1.4s ease; font-size: 28px; }
-  @keyframes bounceIn { 0% { transform: scale(.6) translateY(20px); opacity: 0; } 100% { transform: scale(1) translateY(0); opacity: 1; } }
-  @keyframes fadeUp { from { transform: translateY(14px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-  @keyframes floatUp { from { transform: translateY(30px); opacity: 0; letter-spacing: 6px; } to { transform: translateY(0); opacity: 1; letter-spacing: 2px; } }
   .lyric-line .k1 { color: var(--k1); }
-  .lyric-line .k2 { color: var(--k2); background: rgba(0,0,0,.18); padding: 0 6px; border-radius: 4px; }
+  .lyric-line .k2 { color: var(--k2); background: rgba(217,119,87,.12); padding: 0 6px; border-radius: 4px; }
   .lyric-line .k3 { color: var(--k3); }
-  html[data-mood="excited"] .lyric-line .k2, html[data-mood="peak"] .lyric-line .k2 { display: inline-block; animation: kwob .5s ease-in-out infinite alternate; }
-  @keyframes kwob { from { transform: rotate(-2deg) scale(1); } to { transform: rotate(2deg) scale(1.06); } }
+  html[data-mood="excited"] .lyric-line, html[data-mood="peak"] .lyric-line { animation: bin .4s cubic-bezier(.2,1.6,.4,1); }
+  html[data-mood="peak"] .lyric-line .k2 { display: inline-block; animation: kw .5s ease-in-out infinite alternate; }
+  html[data-mood="calm"] .lyric-line { animation: fin .8s ease; }
+  html[data-mood="melancholy"] .lyric-line { animation: flo 1.5s ease; font-size: 22px; }
+  @keyframes bin { 0% { transform: scale(.7); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+  @keyframes fin { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  @keyframes flo { from { transform: translateY(26px); opacity: 0; letter-spacing: 6px; } to { transform: translateY(0); opacity: 1; letter-spacing: 2px; } }
+  @keyframes kw { from { transform: rotate(-2deg) scale(1); } to { transform: rotate(2deg) scale(1.07); } }
 
-  /* 均衡器（MV 同款频谱条） */
-  .eq { position: absolute; left: 0; right: 0; bottom: 0; height: 64px; display: flex; align-items: flex-end; gap: 4px; padding: 0 20px; opacity: .85; }
-  .eq i { flex: 1; background: var(--accent); opacity: .7; border-radius: 2px 2px 0 0; height: 8%; transition: height .08s linear; min-width: 3px; }
-
-  /* ===== 像素 Claude 吉祥物 ===== */
-  #mascot {
-    position: absolute; right: 40px; bottom: 70px; width: 96px; height: 96px;
-    image-rendering: pixelated; transition: right .7s cubic-bezier(.4,0,.2,1);
-    cursor: pointer; pointer-events: auto;
-  }
-  #mascot svg .armL, #mascot svg .armR, #mascot svg .legL, #mascot svg .legR { transition: transform .2s; }
-  #mascot[data-anim="idle"] svg .body { animation: p-bob 2.4s ease-in-out infinite; }
-  @keyframes p-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-1.5px); } }
-  #mascot[data-anim="dance"] svg .armL { animation: p-waveL .4s ease-in-out infinite alternate; transform-origin: 7px 11px; }
-  #mascot[data-anim="dance"] svg .armR { animation: p-waveR .4s ease-in-out infinite alternate; transform-origin: 13px 11px; }
-  #mascot[data-anim="dance"] svg .legL { animation: p-stepL .4s ease-in-out infinite alternate; transform-origin: 9px 16px; }
-  #mascot[data-anim="dance"] svg .legR { animation: p-stepR .4s ease-in-out infinite alternate; transform-origin: 11px 16px; }
-  #mascot[data-anim="dance"] svg .body { animation: p-hop .4s ease-in-out infinite alternate; }
-  @keyframes p-waveL { from { transform: rotate(0deg); } to { transform: rotate(-38deg); } }
-  @keyframes p-waveR { from { transform: rotate(0deg); } to { transform: rotate(38deg); } }
-  @keyframes p-stepL { from { transform: translateY(0); } to { transform: translateY(-1px) rotate(-14deg); } }
-  @keyframes p-stepR { from { transform: translateY(-1px) rotate(14deg); } to { transform: translateY(0); } }
-  @keyframes p-hop { from { transform: translateY(0); } to { transform: translateY(-2.5px); } }
-  #mascot[data-anim="sleep"] svg .eye { transform: scaleY(.15); transform-origin: center; }
-  #mascot[data-anim="sleep"] svg .body { animation: p-bob 3.6s ease-in-out infinite; }
-  .zzz { position: absolute; right: -14px; top: -6px; font-size: 12px; color: var(--k3); opacity: 0; }
-  #mascot[data-anim="sleep"] .zzz { opacity: 1; animation: zfloat 2s ease-in-out infinite; }
-  @keyframes zfloat { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-14px); opacity: 0; } }
-
-  #bubble {
-    position: absolute; bottom: 104%; right: 0; background: var(--panel2);
-    border: 1px solid var(--accent-dim); color: var(--text);
-    padding: 6px 10px; border-radius: 8px; font-size: 11px; font-family: var(--mono);
-    white-space: nowrap; opacity: 0; transition: opacity .3s; pointer-events: none;
-  }
-  #bubble.show { opacity: 1; }
+  /* 频谱条（MV 终端底部同款） */
+  .eq { position: absolute; left: 0; right: 0; bottom: 0; height: 42px; display: flex; align-items: flex-end; gap: 3px; opacity: .5; pointer-events: none; }
+  .eq i { flex: 1; background: var(--accent); border-radius: 1px 1px 0 0; height: 6%; min-width: 2px; transition: height .08s linear; }
 
   /* ===== 播放条 ===== */
-  .player { border-top: 1px solid var(--border); background: var(--panel); padding: 9px 16px; flex-shrink: 0; display: flex; flex-direction: column; gap: 7px; }
-  .progress-row { display: flex; align-items: center; gap: 10px; }
-  .time { color: var(--faint); font-size: 11px; width: 84px; }
-  .bar { flex: 1; height: 14px; display: flex; align-items: center; cursor: pointer; }
-  .bar .track { width: 100%; height: 3px; background: var(--border); border-radius: 2px; position: relative; }
-  .bar .fill { position: absolute; left: 0; top: 0; height: 100%; background: var(--accent); border-radius: 2px; width: 0%; }
-  .bar .knob { position: absolute; top: 50%; transform: translate(-50%,-50%); width: 10px; height: 10px; border-radius: 50%; background: var(--accent); left: 0%; }
-  .controls-row { display: flex; align-items: center; gap: 12px; }
+  .player { flex-shrink: 0; padding: 4px 0 8px; }
+  .prow { display: flex; align-items: center; gap: 10px; }
   .btn {
     background: none; border: 1px solid var(--border); color: var(--text);
-    width: 30px; height: 30px; border-radius: 6px; cursor: pointer;
-    font-family: var(--mono); font-size: 12px; display: flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 6px; cursor: pointer;
+    font-family: var(--mono); font-size: 11px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
   .btn:hover { border-color: var(--accent-dim); color: var(--accent); }
-  .btn.main { background: var(--accent); border-color: var(--accent); color: #1F1E1D; width: 34px; height: 34px; font-size: 14px; }
-  .np-info { flex: 1; min-width: 0; }
-  .np-info .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .np-info .a { color: var(--faint); font-size: 11px; margin-top: 2px; }
-  .vol-wrap { display: flex; align-items: center; gap: 8px; width: 150px; }
-  .vol-wrap .bar { width: 100px; }
+  .btn.main { background: var(--accent); border-color: var(--accent); color: #1F1E1D; }
+  .pbar { flex: 1; height: 12px; display: flex; align-items: center; cursor: pointer; }
+  .pbar .tr { width: 100%; height: 3px; background: var(--border); border-radius: 2px; position: relative; }
+  .pbar .fl { position: absolute; left: 0; top: 0; height: 100%; background: var(--accent); width: 0%; border-radius: 2px; }
+  .tm { color: var(--faint); font-size: 11px; width: 80px; }
+  .np { color: var(--dim); font-size: 12px; max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .np b { color: var(--text); font-weight: 500; }
+  .vol { display: flex; align-items: center; gap: 6px; width: 130px; flex-shrink: 0; }
+  .vol .pbar { width: 80px; flex: none; }
+  .vol .lb { color: var(--faint); font-size: 10px; }
 
-  .cmdline { border-top: 1px solid var(--border); padding: 9px 16px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; }
-  .cmdline .prompt { color: var(--accent); flex-shrink: 0; }
-  .cmdline input { flex: 1; background: none; border: none; outline: none; color: var(--text); font-family: var(--mono); font-size: 13px; }
-  .cmdline input::placeholder { color: var(--faint); }
-  .cmd-hint { color: var(--faint); font-size: 11px; flex-shrink: 0; }
-  .toast {
-    position: fixed; top: 50px; left: 50%; transform: translateX(-50%);
-    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
-    padding: 8px 14px; border-radius: 8px; font-size: 12px; font-family: var(--mono);
-    opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 99;
+  /* ===== 命令行（> █） ===== */
+  .cmdline { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 8px 2px; }
+  .cmdline .p { color: var(--accent); font-size: 15px; flex-shrink: 0; }
+  .cmdline input {
+    flex: 1; background: none; border: none; outline: none;
+    color: var(--text); font-family: var(--mono); font-size: 14px; caret-color: transparent;
   }
-  .toast.show { opacity: 1; }
+  .cursor {
+    width: 9px; height: 17px; background: var(--accent); flex-shrink: 0;
+    animation: blink 1.06s step-end infinite; margin-left: -4px;
+  }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+
+  /* ===== 底部提示行（› › 同款） ===== */
+  .statusbar {
+    flex-shrink: 0; display: flex; align-items: center; gap: 14px;
+    padding: 7px 2px 2px; color: var(--faint); font-size: 11.5px; border-top: 1px solid #26251F;
+  }
+  .statusbar .arrows { color: var(--dim); letter-spacing: 2px; }
+  .statusbar b { color: var(--accent); font-weight: 500; }
+  .statusbar .right { margin-left: auto; }
 </style>
 </head>
 <body>
-
-<header>
-  <div class="logo-dot"></div>
-  <h1>ClaudeMusic</h1>
-  <span style="color:var(--faint)">v0.2 · 像素 Claude · 情绪引擎</span>
-  <div class="mood-badge">情绪: <b id="mood-name">待机</b> <span id="mood-src" style="color:var(--faint)"></span></div>
-</header>
-
-<main>
-  <div class="side">
-    <div class="panel-head" id="list-title">▷ 搜索结果 <span style="color:var(--faint)">— play 关键词 / demo</span></div>
-    <div class="list" id="result-list">
-      <div class="item" style="cursor:default"><div class="t"><div class="name" style="color:var(--faint)">尚未搜索。输入 play 关键词 或 demo 开始</div></div></div>
-    </div>
+<div class="term">
+  <div class="titlebar">
+    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+    <span class="t">你 — claudemusic — 120×40</span>
   </div>
-  <div class="content">
-    <div class="lyric-stage">
-      <div class="scene">
-        <div class="stars">
-          <svg width="100%" height="100%"><g fill="#C8D4E8"><circle cx="12%" cy="18%" r="1.2"/><circle cx="28%" cy="9%" r="1"/><circle cx="45%" cy="22%" r="1.4"/><circle cx="62%" cy="12%" r="1"/><circle cx="80%" cy="20%" r="1.3"/><circle cx="90%" cy="8%" r="1"/></g></svg>
-        </div>
-        <svg class="sun" width="90" height="90" viewBox="0 0 24 24" shape-rendering="crispEdges">
-          <g fill="var(--sun)"><rect x="9" y="3" width="6" height="18"/><rect x="3" y="9" width="18" height="6"/><rect x="6" y="6" width="12" height="12"/><rect x="7" y="4" width="10" height="16"/><rect x="4" y="7" width="16" height="10"/></g>
-          <rect x="9" y="10" width="2" height="2" fill="#1F1E1D"/><rect x="13" y="10" width="2" height="2" fill="#1F1E1D"/>
-          <rect x="10" y="14" width="4" height="1" fill="#1F1E1D"/><rect x="9" y="13" width="1" height="1" fill="#1F1E1D"/><rect x="14" y="13" width="1" height="1" fill="#1F1E1D"/>
-        </svg>
-        <div class="cloud" style="top:14%; animation-duration:38s">
-          <svg width="90" height="34" viewBox="0 0 30 10" shape-rendering="crispEdges"><g fill="#D8C8C8" opacity=".65"><rect x="6" y="4" width="18" height="4"/><rect x="8" y="2" width="10" height="2"/><rect x="10" y="1" width="6" height="1"/></g></svg>
-        </div>
-        <div class="cloud" style="top:30%; animation-duration:55s; animation-delay:-20s">
-          <svg width="120" height="40" viewBox="0 0 30 10" shape-rendering="crispEdges"><g fill="#C8B8C0" opacity=".5"><rect x="4" y="4" width="22" height="4"/><rect x="8" y="2" width="12" height="2"/></g></svg>
-        </div>
-        <div class="mountains"></div>
-        <div class="eq" id="eq"></div>
-      </div>
-      <div class="lyric-wrap"><div class="lyric-line" id="lyric">把 世界 调成 亮色</div></div>
-      <div id="mascot" data-anim="idle" title="戳戳 Claude">
-        <span class="zzz">z Z</span>
-        <span id="bubble"></span>
-        <svg viewBox="0 0 20 20" width="96" height="96" shape-rendering="crispEdges">
-          <g class="body">
-            <g fill="#D97757">
-              <rect x="9" y="1" width="2" height="3"/><rect x="5" y="2" width="2" height="2"/><rect x="13" y="2" width="2" height="2"/>
-              <rect x="4" y="4" width="12" height="12" rx="0"/>
-              <rect x="3" y="6" width="14" height="8"/>
-              <rect x="5" y="3" width="10" height="14"/>
+
+  <div class="term-body">
+    <div class="welcome">
+      <span class="mascot-box">
+        <span class="mascot" id="mascot" data-anim="idle">
+          <span class="zzz">z Z</span>
+          <svg viewBox="0 0 20 16" width="72" height="58" shape-rendering="crispEdges">
+            <g class="body">
+              <g fill="#D97757">
+                <rect x="3" y="2" width="14" height="10"/>
+                <rect x="2" y="3" width="16" height="8"/>
+                <rect x="4" y="1" width="12" height="12"/>
+              </g>
+              <g fill="#B85C3D"><rect x="3" y="10" width="14" height="2"/><rect x="4" y="11" width="12" height="1"/></g>
+              <g class="eye" fill="#2A1710"><rect x="6.5" y="5" width="2" height="2.4"/><rect x="11.5" y="5" width="2" height="2.4"/></g>
+              <g class="armL" fill="#C4633F"><rect x="0.5" y="6" width="2.5" height="2.4"/></g>
+              <g class="armR" fill="#C4633F"><rect x="17" y="6" width="2.5" height="2.4"/></g>
+              <g class="legL" fill="#B85C3D"><rect x="6" y="12" width="2.4" height="2.6"/></g>
+              <g class="legR" fill="#B85C3D"><rect x="11.6" y="12" width="2.4" height="2.6"/></g>
             </g>
-            <g fill="#B85C3D"><rect x="4" y="14" width="12" height="2"/><rect x="5" y="15" width="10" height="1"/></g>
-            <g fill="#FFF" class="eye"><rect x="6" y="8" width="3" height="3"/><rect x="11" y="8" width="3" height="3"/></g>
-            <g fill="#1F1E1D"><rect x="7" y="9" width="1.6" height="1.6"/><rect x="12" y="9" width="1.6" height="1.6"/></g>
-            <g fill="#E88A6A"><rect x="4.5" y="11" width="1.5" height="1"/><rect x="14" y="11" width="1.5" height="1"/></g>
-            <rect x="8" y="12" width="4" height="1" fill="#1F1E1D"/><rect x="7.5" y="11.4" width="1" height="1" fill="#1F1E1D"/><rect x="11.5" y="11.4" width="1" height="1" fill="#1F1E1D"/>
-          </g>
-          <g class="armL" fill="#D97757"><rect x="1" y="9" width="3" height="2"/><rect x="0.5" y="8.5" width="2" height="1.4"/></g>
-          <g class="armR" fill="#D97757"><rect x="16" y="9" width="3" height="2"/><rect x="17.5" y="8.5" width="2" height="1.4"/></g>
-          <g class="legL" fill="#B85C3D"><rect x="6" y="16" width="2.4" height="3"/></g>
-          <g class="legR" fill="#B85C3D"><rect x="11.6" y="16" width="2.4" height="3"/></g>
-        </svg>
+          </svg>
+        </span>
+      </span>
+      <div>
+        <h1>ClaudeMusic</h1>
+        <div class="meta">私人版 · 非商用 · 情绪引擎已就绪</div>
+        <div class="path">~/音乐</div>
+      </div>
+      <div class="right">
+        情绪: <b id="mood-name">待机</b> <span id="mood-src"></span><br>
+        音源: <b>网易云 / Radio Browser</b><br>
+        <span id="clock">--:--:--</span>
       </div>
     </div>
-  </div>
-</main>
 
-<div class="player">
-  <div class="progress-row" id="progress-widget">
-    <span class="time" id="time-cur">0:00</span>
-    <div class="bar" id="progress-bar"><div class="track"><div class="fill" id="p-fill"></div><div class="knob" id="p-knob"></div></div></div>
-    <span class="time" id="time-total" style="text-align:right">0:00</span>
-  </div>
-  <div class="controls-row">
-    <button class="btn" id="btn-prev" title="上一首">|◀</button>
-    <button class="btn main" id="btn-play" title="播放/暂停">▶</button>
-    <button class="btn" id="btn-next" title="下一首">▶|</button>
-    <div class="np-info">
-      <div class="n" id="bar-name">—</div>
-      <div class="a" id="bar-artist">—</div>
+    <div class="out" id="out">
+      <div class="ln dim">ClaudeMusic v0.3 — 输入 play 关键词 开始，或试试 demo / radio 爵士 / mood 忧郁 / help</div>
+      <div class="eq" id="eq"></div>
     </div>
-    <div class="vol-wrap" id="vol-widget">
-      <span style="color:var(--faint);font-size:11px">VOL</span>
-      <div class="bar" id="vol-bar"><div class="track"><div class="fill" id="v-fill" style="width:80%"></div><div class="knob" id="v-knob" style="left:80%"></div></div></div>
-      <span style="color:var(--faint);font-size:11px" id="vol-num">80</span>
-    </div>
-  </div>
-</div>
 
-<div class="cmdline">
-  <span class="prompt">&gt;</span>
-  <input id="cmd" type="text" placeholder="play 关键词 | radio 名称 | demo | mood auto|欢快|平静|忧郁|高潮 | vol 50 | help" autocomplete="off">
-  <span class="cmd-hint">Enter 执行</span>
+    <div class="player">
+      <div class="prow" id="progress-widget">
+        <button class="btn" id="btn-prev" title="上一首">|◀</button>
+        <button class="btn main" id="btn-play" title="播放/暂停">▶</button>
+        <button class="btn" id="btn-next" title="下一首">▶|</button>
+        <span class="np" id="np-line">未在播放</span>
+        <div class="pbar" id="progress-bar"><div class="tr"><div class="fl" id="p-fill"></div></div></div>
+        <span class="tm" id="time-cur">0:00 / 0:00</span>
+        <div class="vol" id="vol-widget">
+          <span class="lb">VOL</span>
+          <div class="pbar" id="vol-bar"><div class="tr"><div class="fl" id="v-fill" style="width:80%"></div></div></div>
+          <span class="lb" id="vol-num">80</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cmdline">
+      <span class="p">&gt;</span>
+      <input id="cmd" type="text" autocomplete="off" spellcheck="false" aria-label="命令输入">
+      <span class="cursor"></span>
+    </div>
+
+    <div class="statusbar">
+      <span class="arrows">› ›</span>
+      <span>mood auto on (<b>m</b> 循环切换)</span>
+      <span>play &lt;词&gt; · radio &lt;名&gt; · demo · clear</span>
+      <span class="right" id="mood-desc">情绪驱动歌词与交互 · shift+enter 待用</span>
+    </div>
+  </div>
 </div>
 
 <audio id="audio"></audio>
-<div class="toast" id="toast"></div>
-
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
 const audio = $("audio");
+const state = { queue: [], cur: -1, seekable: false, vol: 0.8, playing: false };
 
-const state = { queue: [], cur: -1, seekable: false, vol: 0.8 };
-
-/* ==================== 像素场景 & 吉祥物 ==================== */
-const mascot = $("mascot"), bubble = $("bubble");
-let bubbleTimer = null;
-function say(t, ms) {
-  bubble.textContent = t; bubble.classList.add("show");
-  clearTimeout(bubbleTimer);
-  bubbleTimer = setTimeout(() => bubble.classList.remove("show"), ms || 3200);
+/* ==================== 终端输出 ==================== */
+const out = $("out");
+function echo(html, cls) {
+  const d = document.createElement("div");
+  d.className = "ln" + (cls ? " " + cls : "");
+  d.innerHTML = html;
+  out.insertBefore(d, $("eq"));
+  out.scrollTop = out.scrollHeight;
 }
+function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+function toastLike(msg, cls) { echo("<span class='p'>⏺</span> " + esc(msg), cls || "dim"); }
+
+/* ==================== 吉祥物 ==================== */
+const mascot = $("mascot");
 function mascotAnim(a) { mascot.dataset.anim = a; }
 mascot.addEventListener("click", () => {
-  const lines = ["在听在听~", "这首歌不错吧！", "需要换歌就喊我", "♪ ♫ ♬", "戳我干嘛，好好听歌"];
-  say(lines[Math.floor(Math.random() * lines.length)]);
+  const lines = ["在听在听~", "这首歌不错吧！", "换歌就喊我", "♪ ♫ ♬", "戳我干嘛，好好听歌"];
+  echo("<span class='p'>Claude:</span> " + esc(lines[Math.floor(Math.random() * lines.length)]));
 });
 
-/* ==================== 歌词（演示文案 · 关键词分色） ==================== */
+/* ==================== 时钟 ==================== */
+setInterval(() => { $("clock").textContent = new Date().toTimeString().slice(0, 8); }, 1000);
+
+/* ==================== 歌词（演示文案） ==================== */
 const DEMO_LYRICS = [
   "落日 把云朵 烫成了 <b class='k1'>橘色</b>",
   "你像 <b class='k1'>一阵风</b> 吹散了 <b class='k2'>烦恼</b>",
@@ -311,28 +271,27 @@ const DEMO_LYRICS = [
   "晚风 轻轻 哼着 <b class='k3'>歌</b>",
   "星星 排好队 为你 <b class='k2'>闪烁</b>",
 ];
-let lyricIdx = 0, lyricTimer = null;
+let lyricIdx = 0, lyricTimer = null, lyricEl = null;
 function nextLyric() {
-  $("lyric").innerHTML = DEMO_LYRICS[lyricIdx % DEMO_LYRICS.length];
+  if (lyricEl) lyricEl.remove();
+  lyricEl = document.createElement("div");
+  lyricEl.className = "lyric-line";
+  lyricEl.innerHTML = DEMO_LYRICS[lyricIdx % DEMO_LYRICS.length];
+  out.insertBefore(lyricEl, $("eq"));
+  out.scrollTop = out.scrollHeight;
   lyricIdx++;
 }
-function startLyrics() {
-  nextLyric();
-  clearInterval(lyricTimer);
-  lyricTimer = setInterval(() => {
-    if (state.playing) nextLyric();
-  }, 4200);
-}
+function startLyrics() { nextLyric(); clearInterval(lyricTimer); lyricTimer = setInterval(() => { if (state.playing) nextLyric(); }, 4200); }
+function stopLyrics() { clearInterval(lyricTimer); if (lyricEl) { lyricEl.remove(); lyricEl = null; } }
 
 /* ==================== 情绪引擎 ==================== */
 const MOODS = {
-  excited:    { name: "欢快", anim: "dance", desc: "高能量·快节奏" },
-  peak:       { name: "高潮", anim: "dance", desc: "能量峰值" },
-  calm:       { name: "平静", anim: "idle",  desc: "中低能量" },
-  melancholy: { name: "忧郁", anim: "sleep", desc: "低能量·暗色" },
+  excited: { name: "欢快", anim: "dance" }, peak: { name: "高潮", anim: "dance" },
+  calm: { name: "平静", anim: "idle" }, melancholy: { name: "忧郁", anim: "sleep" },
 };
+const MOOD_KEYS = ["auto", "excited", "peak", "calm", "melancholy"];
 let moodAuto = true, moodCur = "calm", analyser = null, audioCtx = null, tainted = false;
-let tdBuf = null, fqBuf = null, fluxHist = [], synthPhase = 0;
+let tdBuf, fqBuf, fluxHist = [], synthPhase = 0;
 
 function initAnalyser() {
   try {
@@ -350,14 +309,30 @@ audio.addEventListener("play", () => { if (audioCtx && audioCtx.state === "suspe
 function setMood(key, srcLabel) {
   if (!MOODS[key] || key === moodCur) return;
   moodCur = key;
-  document.documentElement.dataset.mood = key === "peak" ? "peak" : key;
+  document.documentElement.dataset.mood = key;
   $("mood-name").textContent = MOODS[key].name;
   $("mood-src").textContent = srcLabel || "";
-  mascotAnim(MOODS[key].anim);
-  const hello = { excited: "节奏起来了，跳一个！", peak: "副歌！跟我一起摇摆~", calm: "嗯…慢慢听~", melancholy: "这首有点伤感，我陪你" };
-  say(hello[key]);
+  $("mood-desc").textContent = "当前情绪「" + MOODS[key].name + "」正在驱动歌词与交互";
+  mascotAnim(state.playing ? MOODS[key].anim : "sleep");
+  const hello = { excited: "节奏起来了！", peak: "副歌！跟我摇~", calm: "嗯…慢慢听~", melancholy: "这首有点伤感，我陪你" };
+  echo("<span class='p'>Claude:</span> " + hello[key], "dim");
 }
-
+function classify(rms, centroid, onsets) {
+  let key;
+  if (rms > 0.55 && onsets > 4) key = "peak";
+  else if (rms > 0.3 && centroid > 0.22 && onsets > 1.5) key = "excited";
+  else if (rms < 0.18 && centroid < 0.18) key = "melancholy";
+  else key = "calm";
+  if (key !== moodCur && moodAuto) setMood(key, "(实时)");
+}
+function drawEQ(fq) {
+  const step = Math.floor(fq.length / eqEls.length);
+  for (let i = 0; i < eqEls.length; i++) {
+    let v = 0;
+    for (let j = 0; j < step; j++) v = Math.max(v, fqBuf[i * step + j]);
+    eqEls[i].style.height = Math.max(6, v / 255 * 100) + "%";
+  }
+}
 function moodLoop() {
   if (state.playing && analyser && !tainted) {
     analyser.getByteTimeDomainData(tdBuf);
@@ -369,43 +344,24 @@ function moodLoop() {
     for (let i = 0; i < fqBuf.length; i++) { wsum += fqBuf[i] * i; fsum += fqBuf[i]; }
     const centroid = fsum > 0 ? wsum / fsum / fqBuf.length : 0;
     fluxHist.push(rms); if (fluxHist.length > 43) fluxHist.shift();
-    const onsets = fluxHist.filter((v, i, a) => i > 0 && v - a[i-1] > 0.02).length;
+    const onsets = fluxHist.filter((v, i, a) => i > 0 && v - a[i-1] > 0.02).length / (fluxHist.length / 20);
     if (allZero && rms < 0.001) tainted = true;
-    else classify(rms, centroid, onsets / (fluxHist.length / 20), drawEQ(fqBuf));
+    else { classify(rms, centroid, onsets); drawEQ(fqBuf); }
   }
   if (state.playing && (tainted || !analyser)) {
     synthPhase += 0.09;
-    const t = audio.currentTime || synthPhase;
     const rms = 0.25 + 0.2 * Math.abs(Math.sin(synthPhase)) + 0.1 * Math.sin(synthPhase * 0.37);
     const centroid = 0.3 + 0.15 * Math.sin(synthPhase * 0.23);
     const onsets = 2 + 2 * Math.abs(Math.sin(synthPhase * 0.5));
     $("mood-src").textContent = "(模拟)";
-    classify(rms, centroid, onsets, null);
+    classify(rms, centroid, onsets);
+    for (let i = 0; i < eqEls.length; i++) eqEls[i].style.height = Math.max(6, (Math.abs(Math.sin(synthPhase + i * 0.4)) * 70 + 8)) + "%";
   }
   requestAnimationFrame(moodLoop);
 }
-function classify(rms, centroid, onsets, eqDrawn) {
-  let key;
-  if (rms > 0.55 && onsets > 4) key = "peak";
-  else if (rms > 0.3 && centroid > 0.22 && onsets > 1.5) key = "excited";
-  else if (rms < 0.18 && centroid < 0.18) key = "melancholy";
-  else key = "calm";
-  if (key !== moodCur && moodAuto) setMood(key, "(实时分析)");
-}
-function drawEQ(fq) {
-  const bars = eqEls;
-  const step = Math.floor(fq.length / bars.length);
-  for (let i = 0; i < bars.length; i++) {
-    let v = 0;
-    for (let j = 0; j < step; j++) v = Math.max(v, fqBuf[i * step + j]);
-    bars[i].style.height = Math.max(6, v / 255 * 100) + "%";
-  }
-}
 const eqEls = [];
-for (let i = 0; i < 28; i++) { const b = document.createElement("i"); $("eq").appendChild(b); eqEls.push(b); }
-setInterval(() => {
-  if (!state.playing) eqEls.forEach(b => b.style.height = "6%");
-}, 300);
+for (let i = 0; i < 30; i++) { const b = document.createElement("i"); $("eq").appendChild(b); eqEls.push(b); }
+setInterval(() => { if (!state.playing) eqEls.forEach(b => b.style.height = "6%"); }, 300);
 initAnalyser();
 moodLoop();
 
@@ -414,9 +370,9 @@ function setPlayingUI(on) {
   state.playing = on;
   $("btn-play").textContent = on ? "❚❚" : "▶";
   mascotAnim(on ? MOODS[moodCur].anim : "sleep");
-  if (!on) say("先歇一会儿…");
-  if (on) startLyrics(); else clearInterval(lyricTimer);
+  if (on) startLyrics(); else { stopLyrics(); }
 }
+function fmt(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s/60) + ":" + String(s%60).padStart(2,"0"); }
 function loadTrack(i) {
   if (!state.queue.length) return;
   state.cur = (i + state.queue.length) % state.queue.length;
@@ -425,30 +381,24 @@ function loadTrack(i) {
   audio.src = t.outer || t.url || t.url_resolved;
   audio.volume = state.vol;
   audio.play().catch(() => {});
-  document.querySelectorAll(".item").forEach(el => el.classList.remove("active"));
-  const rows = document.querySelectorAll("#result-list .item");
-  if (rows[state.cur]) rows[state.cur].classList.add("active");
-  $("bar-name").textContent = t.name;
-  $("bar-artist").textContent = t.artist || t.country || "";
-  say("正在播放: " + t.name);
+  document.querySelectorAll(".row").forEach(el => el.classList.remove("on"));
+  const rows = document.querySelectorAll("#out .row");
+  if (rows[state.cur]) { rows[state.cur].classList.add("on"); rows[state.cur].scrollIntoView({ block: "nearest" }); }
+  $("np-line").innerHTML = "<b>" + esc(t.name) + "</b> — " + esc(t.artist || t.country || "");
+  echo("<span class='p'>▶</span> 正在播放: <b>" + esc(t.name) + "</b> — " + esc(t.artist || t.country || ""), "");
 }
 audio.addEventListener("playing", () => setPlayingUI(true));
-audio.addEventListener("pause", () => { if (!audio.ended) setPlayingUI(false); });
+audio.addEventListener("pause", () => { if (!audio.ended) { state.playing = false; $("btn-play").textContent = "▶"; mascotAnim("sleep"); stopLyrics(); } });
 audio.addEventListener("ended", () => { if (state.queue.length) loadTrack(state.cur + 1); });
 audio.addEventListener("error", () => {
   if (!audio.src) return;
-  say("这首可能是 VIP 曲目，登录后可解锁，先试试电台模式");
+  echo("<span class='p'>⏺</span> 该曲目可能需要登录/会员权限（Tauri 版登录后解锁）", "err");
 });
 audio.addEventListener("timeupdate", () => {
   if (!state.seekable || !audio.duration) return;
-  const p = audio.currentTime / audio.duration * 100;
-  $("p-fill").style.width = p + "%"; $("p-knob").style.left = p + "%";
-  $("time-cur").textContent = fmt(audio.currentTime);
-  $("time-total").textContent = fmt(audio.duration);
+  $("p-fill").style.width = (audio.currentTime / audio.duration * 100) + "%";
+  $("time-cur").textContent = fmt(audio.currentTime) + " / " + fmt(audio.duration);
 });
-function fmt(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s/60) + ":" + String(s%60).padStart(2,"0"); }
-function toast(m) { const t = $("toast"); t.textContent = m; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2200); }
-function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
 
 /* ==================== 搜索 ==================== */
 const DEMO_TRACKS = [
@@ -464,7 +414,6 @@ async function neteaseSearch(q) {
       id: s.id, name: s.name,
       artist: (s.artists || []).map(a => a.name).join("/"),
       album: s.album ? s.album.name : "",
-      pic: s.album && s.album.picUrl ? s.album.picUrl : "",
       outer: "https://music.163.com/song/media/outer/url?id=" + s.id + ".mp3",
     }));
   } catch (e) { return null; }
@@ -478,25 +427,36 @@ async function radioSearch(q) {
     }));
   } catch (e) { return []; }
 }
-function renderList(list, isRadio) {
-  $("list-title").innerHTML = isRadio ? '▷ 电台结果 <span style="color:var(--faint)">— 实时数据</span>' : '▷ 搜索结果 <span style="color:var(--faint)">— 网易云曲库</span>';
-  $("result-list").innerHTML = list.map((t, i) =>
-    '<div class="item" data-i="' + i + '"><div class="t"><div class="name">' + esc(t.name) + '</div><div class="sub">' + esc(t.artist || "") + (t.album ? " · " + esc(t.album) : "") + '</div></div><span class="tag' + (isRadio ? " live" : "") + '">' + (isRadio ? "LIVE" : "MP3") + '</span></div>').join("");
-  document.querySelectorAll("#result-list .item").forEach(el => el.addEventListener("click", () => loadTrack(+el.dataset.i)));
+function renderRows(list, isRadio) {
+  document.querySelectorAll("#out .row").forEach(el => el.remove());
+  list.forEach((t, i) => {
+    const d = document.createElement("div");
+    d.className = "row"; d.dataset.i = i;
+    d.innerHTML = '<span class="idx">' + String(i+1).padStart(2,"0") + '</span><span class="nm">' + esc(t.name) + '</span><span class="ar">' + esc(t.artist || "") + '</span><span class="tg' + (isRadio ? " live" : "") + '">' + (isRadio ? "● LIVE" : "MP3") + '</span>';
+    d.addEventListener("click", () => loadTrack(i));
+    out.insertBefore(d, $("eq"));
+  });
+  out.scrollTop = out.scrollHeight;
 }
 async function doPlay(q) {
-  toast("搜索中: " + q);
+  toastLike("搜索「" + q + "」…");
   const songs = await neteaseSearch(q);
-  if (songs && songs.length) { state.queue = songs; renderList(songs, false); loadTrack(0); return; }
+  if (songs && songs.length) {
+    toastLike("网易云 → " + songs.length + " 首", "ok");
+    state.queue = songs; renderRows(songs, false); loadTrack(0); return;
+  }
   const radios = await radioSearch(q);
-  if (radios.length) { state.queue = radios; renderList(radios, true); loadTrack(0); say(songs === null ? "浏览器直连受限，切电台模式；Tauri 版可解锁完整网易云" : "没找到歌曲，为你找到相关电台"); }
-  else { say("没找到「" + q + "」"); toast("无结果"); }
+  if (radios.length) {
+    toastLike(songs === null ? "浏览器直连受限，切电台模式（Tauri 版可解锁完整网易云）" : "没找到歌曲，为你找到相关电台", "dim");
+    state.queue = radios; renderRows(radios, true); loadTrack(0);
+  } else { echo("<span class='p'>⏺</span> 没找到「" + esc(q) + "」", "err"); }
 }
 async function doRadio(q) {
-  toast("搜索电台: " + q);
+  toastLike("搜索电台「" + q + "」…");
   const radios = await radioSearch(q);
-  if (!radios.length) { say("没找到相关电台"); return; }
-  state.queue = radios; renderList(radios, true); loadTrack(0);
+  if (!radios.length) { echo("<span class='p'>⏺</span> 没找到相关电台", "err"); return; }
+  toastLike("Radio Browser → " + radios.length + " 个电台", "ok");
+  state.queue = radios; renderRows(radios, true); loadTrack(0);
 }
 
 /* ==================== 进度/音量 ==================== */
@@ -513,49 +473,53 @@ bindBar($("progress-bar"), (p) => { if (state.seekable && audio.duration) audio.
 function setVol(v) {
   state.vol = Math.max(0, Math.min(1, v));
   audio.volume = state.vol;
-  const p = state.vol * 100;
-  $("v-fill").style.width = p + "%"; $("v-knob").style.left = p + "%"; $("vol-num").textContent = Math.round(p);
+  $("v-fill").style.width = state.vol * 100 + "%"; $("vol-num").textContent = Math.round(state.vol * 100);
 }
-bindBar($("vol-bar"), (p) => { setVol(p); say("音量 " + Math.round(p*100) + "%"); });
+bindBar($("vol-bar"), setVol);
 
 $("btn-play").addEventListener("click", () => {
   if (!audio.src) { execCmd("demo"); return; }
-  if (audio.paused) { audio.play().catch(()=>{}); say("继续播放~"); } else audio.pause();
+  if (audio.paused) { audio.play().catch(()=>{}); } else audio.pause();
 });
 $("btn-next").addEventListener("click", () => { if (state.queue.length) loadTrack(state.cur + 1); });
 $("btn-prev").addEventListener("click", () => { if (state.queue.length) loadTrack(state.cur - 1); });
 
 /* ==================== 命令 ==================== */
-function help() {
-  say("命令: play <词> · radio <名> · next · prev · pause · mood auto|欢快|平静|忧郁|高潮 · demo · help");
-}
 function execCmd(raw) {
   const s = raw.trim(); if (!s) return;
+  echo("<span class='p'>&gt;</span> " + esc(s));
   const [cmd, ...rest] = s.split(/\s+/); const arg = rest.join(" ");
   switch (cmd.toLowerCase()) {
-    case "play": arg ? doPlay(arg) : say("用法: play <关键词>"); break;
+    case "play": arg ? doPlay(arg) : toastLike("用法: play <关键词>", "dim"); break;
     case "radio": doRadio(arg || "华语"); break;
     case "next": $("btn-next").click(); break;
     case "prev": $("btn-prev").click(); break;
     case "pause": audio.pause(); break;
     case "resume": audio.play().catch(()=>{}); break;
     case "vol": { const v = parseFloat(arg); if (!isNaN(v)) setVol(v/100); break; }
+    case "clear": document.querySelectorAll("#out .ln, #out .row, .lyric-line").forEach(el => { if (el.id !== "eq" && !el.contains($("eq"))) el.remove(); }); break;
     case "mood": {
-      const map = { "欢快": "excited", "excited": "excited", "平静": "calm", "calm": "calm", "忧郁": "melancholy", "sad": "melancholy", "高潮": "peak", "peak": "peak", "auto": "auto" };
-      const k = map[(arg || "").toLowerCase()];
-      if (k === "auto") { moodAuto = true; say("情绪自动识别已开启"); $("mood-src").textContent = "(auto)"; }
-      else if (k && MOODS[k]) { moodAuto = false; setMood(k, "(手动)"); }
-      else say("用法: mood auto|欢快|平静|忧郁|高潮");
+      const map = { "欢快": "excited", "excited": "excited", "平静": "calm", "calm": "calm", "忧郁": "melancholy", "sad": "melancholy", "高潮": "peak", "peak": "peak" };
+      if (arg === "auto" || !arg) { moodAuto = true; $("mood-src").textContent = "(auto)"; toastLike("情绪自动识别已开启", "ok"); }
+      else if (map[arg]) { moodAuto = false; setMood(map[arg], "(手动)"); }
+      else toastLike("用法: mood auto|欢快|平静|忧郁|高潮", "dim");
       break;
     }
-    case "demo": state.queue = DEMO_TRACKS.slice(); renderList(DEMO_TRACKS, false); loadTrack(0); break;
-    case "help": help(); break;
+    case "demo": state.queue = DEMO_TRACKS.slice(); renderRows(DEMO_TRACKS, false); loadTrack(0); break;
+    case "help":
+      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · pause · vol 0-100 · mood auto|欢快|平静|忧郁|高潮 · demo · clear", "dim"); break;
     default: doPlay(s);
   }
 }
 $("cmd").addEventListener("keydown", (e) => { if (e.key === "Enter") { execCmd(e.target.value); e.target.value = ""; } });
-
-setTimeout(() => { say("嗨！我是像素版 Claude，放歌我就跟你一起蹦"); }, 800);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "m" && document.activeElement !== $("cmd")) {
+    const i = MOOD_KEYS.indexOf(moodAuto ? "auto" : moodCur);
+    const nextKey = MOOD_KEYS[(i + 1) % MOOD_KEYS.length];
+    execCmd("mood " + nextKey);
+  }
+});
+setTimeout(() => echo("<span class='p'>Claude:</span> 嗨，我是你的音乐搭子。放一首歌试试？", "dim"), 700);
 </script>
 </body>
 </html>
