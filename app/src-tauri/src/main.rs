@@ -26,7 +26,7 @@ fn app_log(msg: String) {
     }
 }
 
-fn handle_proxy(target: String) -> Response<Vec<u8>> {
+fn handle_proxy(target: String, range: Option<String>) -> Response<Vec<u8>> {
     let allowed = url::Url::parse(&target)
         .ok()
         .and_then(|u| u.host_str().map(|h| h.to_string()))
@@ -63,6 +63,10 @@ fn handle_proxy(target: String) -> Response<Vec<u8>> {
     if target.contains("qq.com") {
         req = req.header("Referer", "https://y.qq.com/");
     }
+    // 转发 Range 头 → 上游返回 206 分段, 音频 seek 才能正常工作
+    if let Some(r) = &range {
+        req = req.header("Range", r);
+    }
 
     match req.send() {
         Ok(resp) => {
@@ -73,15 +77,30 @@ fn handle_proxy(target: String) -> Response<Vec<u8>> {
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("application/octet-stream")
                 .to_string();
+            let content_range = resp
+                .headers()
+                .get("content-range")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let content_length = resp
+                .headers()
+                .get("content-length")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
             let mut buf = Vec::with_capacity(1 << 20);
             let _ = resp.take(MAX_BODY).read_to_end(&mut buf);
-            Response::builder()
+            let mut b = Response::builder()
                 .status(status)
                 .header("Access-Control-Allow-Origin", "*")
                 .header("Content-Type", ct)
-                .header("Cache-Control", "no-cache")
-                .body(buf)
-                .unwrap()
+                .header("Accept-Ranges", "bytes");
+            if let Some(cr) = content_range {
+                b = b.header("Content-Range", cr);
+            }
+            if let Some(cl) = content_length {
+                b = b.header("Content-Length", cl);
+            }
+            b.body(buf).unwrap()
         }
         Err(e) => Response::builder()
             .status(StatusCode::BAD_GATEWAY)
@@ -96,8 +115,13 @@ fn main() {
         .invoke_handler(tauri::generate_handler![app_log])
         .register_uri_scheme_protocol("proxy", |_ctx, request| {
             let uri = request.uri().clone();
-            // 首选: http://proxy.localhost/?u=<urlencoded-target>
-            // 兼容: http://proxy.localhost/<urlencoded-target> (部分 WebView 会改写路径)
+            let range = request
+                .headers()
+                .get("range")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            // 首选: https://proxy.localhost/?u=<urlencoded-target>
+            // 兼容: 路径传参变体 (部分 WebView 会改写路径)
             let mut target = String::new();
             if let Some(q) = uri.query() {
                 if let Some(rest) = q.strip_prefix("u=") {
@@ -117,7 +141,7 @@ fn main() {
                     target = raw.to_string();
                 }
             }
-            handle_proxy(target)
+            handle_proxy(target, range)
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

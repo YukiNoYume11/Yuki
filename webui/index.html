@@ -260,9 +260,9 @@
 
     <div class="statusbar">
       <span class="arrows">› ›</span>
-      <span>mood auto on (<b>m</b> 循环切换)</span>
+      <span>mood auto on (<b>m</b> 循环切换) · ←退5s →进5s 长按加速</span>
       <span>play &lt;词&gt; · radio &lt;名&gt; · demo · diag</span>
-      <span class="right" id="mood-desc">情绪驱动字幕与交互</span>
+      <span class="right" id="mood-desc">歌内相对情绪驱动字幕与交互</span>
     </div>
   </div>
 </div>
@@ -455,12 +455,23 @@ function setMood(key) {
     cmSay(hello[key], 3200, true);
   }
 }
+/* 歌内相对情绪: 能量按整首歌的 min/max 归一化, 而非绝对阈值 */
+let songStats = { min: Infinity, max: 0, sum: 0, n: 0 };
+function resetSongStats() { songStats = { min: Infinity, max: 0, sum: 0, n: 0 }; }
 function classify(rms, centroid, onsets) {
+  const st = songStats;
+  st.min = Math.min(st.min, rms); st.max = Math.max(st.max, rms); st.sum += rms; st.n++;
   let key;
-  if (rms > 0.55 && onsets > 4) key = "peak";
-  else if (rms > 0.3 && centroid > 0.22 && onsets > 1.5) key = "excited";
-  else if (rms < 0.18 && centroid < 0.18) key = "melancholy";
-  else key = "calm";
+  if (st.n < 40 || st.max < 0.05) {
+    key = "calm"; // 开头2秒热身: 统计不足时先判平静
+  } else {
+    const rel = (rms - st.min) / (st.max - st.min + 1e-6); // 0~1 歌内相对能量
+    const avg = st.sum / st.n;
+    if (rel > 0.82 && onsets > 3) key = "peak";
+    else if (rel > 0.55 || rms > avg * 1.35) key = "excited";
+    else if (rel < 0.25 && centroid < 0.2) key = "melancholy";
+    else key = "calm";
+  }
   if (key === moodCur) { moodCand = null; return; }
   if (!moodAuto) return;
   if (key !== moodCand) { moodCand = key; moodCandSince = Date.now(); }
@@ -598,6 +609,7 @@ function loadTrack(i) {
   const t = state.queue[state.cur];
   state.seekable = !!t.outer;
   const rawUrl = t.outer || t.url || t.url_resolved;
+  resetSongStats(); fluxHist = [];
   window.cmLog && window.cmLog("LOAD name=" + t.name + " src=" + rawUrl.slice(0, 100));
   if (window.__CM_IS_TAURI__ && /music\.163\.com|126\.net/.test(rawUrl)) {
     window.__CM_PROXY__(rawUrl).then(u => {
@@ -894,6 +906,44 @@ setInterval(() => {
     cmSay(idle[Math.floor(Math.random() * idle.length)], 3000);
   }
 }, 55000);
+
+/* 方向键: 左退5s / 右进5s(单击); 长按右=2倍速播放, 长按左=持续快退 */
+let holdTimer = null, holding = false, savedRate = 1, holdDir = 0, holdInterval = null;
+document.addEventListener("keydown", (e) => {
+  if (document.activeElement === cmdEl || !state.seekable) return;
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  e.preventDefault();
+  if (holding) return;
+  if (!e.repeat) {
+    const d = e.key === "ArrowRight" ? 5 : -5;
+    audio.currentTime = Math.max(0, Math.min(audio.duration || 0, audio.currentTime + d));
+    cmWalkTo($("progress-widget"), (d > 0 ? "快进 " : "快退 ") + 5 + " 秒");
+    holdTimer = setTimeout(() => {
+      holding = true;
+      holdDir = e.key === "ArrowRight" ? 1 : -1;
+      if (holdDir > 0) {
+        savedRate = audio.playbackRate;
+        audio.playbackRate = 2;
+        cmSay("2倍速快进中…", 1800, true);
+      } else {
+        cmSay("持续快退中…松开停止", 1800, true);
+        holdInterval = setInterval(() => { audio.currentTime = Math.max(0, audio.currentTime - 0.4); }, 100);
+      }
+      mascotSet("walk");
+    }, 380);
+  }
+});
+document.addEventListener("keyup", (e) => {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  clearTimeout(holdTimer);
+  if (holding) {
+    holding = false;
+    if (holdDir > 0) audio.playbackRate = savedRate;
+    else { clearInterval(holdInterval); holdInterval = null; }
+    mascotSet(state.playing ? MOODS[moodCur].anim : "idle");
+    cmSay("回到 " + SPEED_LABELS[speedIdx] + " 正常播放", 2000);
+  }
+});
 
 setTimeout(() => cmSay("嗨！我是 Claude，放首歌我陪你听", 3600, true), 900);
 window.ClaudeTools = {
