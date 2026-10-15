@@ -19,7 +19,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://proxy.localhost http://proxy.localhost; connect-src 'self' https://proxy.localhost http://proxy.localhost https://de1.api.radio-browser.info; media-src 'self' blob: https://proxy.localhost http://proxy.localhost http: https:; font-src 'self' data:"
     }
   },
   "bundle": {

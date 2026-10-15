@@ -26,15 +26,30 @@ fn app_log(msg: String) {
     }
 }
 
+/// 域名白名单: 精确或点分后缀匹配(防 evil163.com 这类绕过)
+fn host_allowed(host: &str) -> bool {
+    ["163.com", "126.net", "qq.com"].iter().any(|suffix| {
+        host == *suffix || host.ends_with(&format!(".{}", suffix))
+    })
+}
+
+/// 复用单例 HTTP 客户端: 连接池 + TLS 会话复用, seek/切歌不再重复握手
+static CLIENT: std::sync::OnceLock<reqwest::blocking::Client> = std::sync::OnceLock::new();
+fn get_client() -> &'static reqwest::blocking::Client {
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) ClaudeMusic/0.3")
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .expect("failed to build http client")
+    })
+}
+
 fn handle_proxy(target: String, range: Option<String>) -> Response<Vec<u8>> {
     let allowed = url::Url::parse(&target)
         .ok()
         .and_then(|u| u.host_str().map(|h| h.to_string()))
-        .map(|h| {
-            h.ends_with("163.com")
-                || h.ends_with("126.net")
-                || h.ends_with("qq.com")
-        })
+        .map(|h| host_allowed(&h))
         .unwrap_or(false);
 
     if !allowed {
@@ -44,19 +59,7 @@ fn handle_proxy(target: String, range: Option<String>) -> Response<Vec<u8>> {
             .unwrap();
     }
 
-    let client = match reqwest::blocking::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) ClaudeMusic/0.3")
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(format!("client error: {e}").into_bytes())
-                .unwrap()
-        }
-    };
+    let client = get_client();
 
     let mut req = client.get(&target);
     // QQ 音乐接口需要 Referer 才返回数据
@@ -107,7 +110,8 @@ fn main() {
     let _ = std::fs::create_dir_all("D:/ClaudeMusic/logs");
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![app_log])
-        .register_uri_scheme_protocol("proxy", |_ctx, request| {
+        // 异步协议处理器: 网络请求在独立线程执行, 不阻塞 UI/WebView 线程
+        .register_asynchronous_uri_scheme_protocol("proxy", |_ctx, request, responder| {
             let uri = request.uri().clone();
             let range = request
                 .headers()
@@ -135,7 +139,9 @@ fn main() {
                     target = raw.to_string();
                 }
             }
-            handle_proxy(target, range)
+            std::thread::spawn(move || {
+                responder.respond(handle_proxy(target, range));
+            });
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

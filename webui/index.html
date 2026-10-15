@@ -499,7 +499,10 @@ function drawEQ(fq) {
     eqEls[i].style.height = Math.max(6, (c ? v / c : 0) / 255 * 100) + "%";
   }
 }
+/* rAF 循环仅在播放时运行, 暂停时不空转 */
+let rafActive = false;
 function moodLoop() {
+  if (!state.playing) { rafActive = false; return; }
   if (state.playing && analyser && !tainted) {
     analyser.getByteTimeDomainData(tdBuf);
     analyser.getByteFrequencyData(fqBuf);
@@ -546,7 +549,9 @@ const eqEls = [];
 for (let i = 0; i < 30; i++) { const b = document.createElement("i"); $("eq").appendChild(b); eqEls.push(b); }
 setInterval(() => { if (!state.playing) eqEls.forEach(b => b.style.height = "6%"); }, 300);
 initAnalyser();
-moodLoop();
+function startMoodLoop() {
+  if (!rafActive) { rafActive = true; requestAnimationFrame(moodLoop); }
+}
 
 /* ==================== 字幕引擎(独立层, 只在切歌时加载) ==================== */
 const DEMO_LYRICS = [
@@ -669,7 +674,7 @@ function loadTrack(i) {
   cmWalkTo($("np-line"));
   cmSay("正在播放: " + t.name, 3000, true);
 }
-audio.addEventListener("playing", () => { failStreak = 0; setPlayingUI(true); });
+audio.addEventListener("playing", () => { failStreak = 0; setPlayingUI(true); startMoodLoop(); });
 audio.addEventListener("pause", () => { if (!audio.ended) { state.playing = false; $("btn-play").textContent = "▶"; mascotSet("idle"); } });
 audio.addEventListener("ended", () => { if (state.queue.length) loadTrack(state.cur + 1); });
 let failStreak = 0;
