@@ -599,7 +599,7 @@ function nextDemoLyric() {
 }
 async function loadLyrics(track) {
   stopLyrics();
-  lrcLines = []; lrcPtr = 0;
+  lrcLines = [];
   window.cmLog && window.cmLog('LYRIC-CALL id=' + (track && track.id) + ' mode=' + lyricMode);
   if (track && track.id && lyricMode) {
     const lrc = await fetchLrc(track.id);
