@@ -1004,7 +1004,7 @@ document.addEventListener("keyup", (e) => {
   }
 });
 
-setTimeout(() => cmSay('"嗨！我是 Claude，放首歌我陪你听", 3600, true), 900);
+setTimeout(() => cmSay('嗨！我是 Claude，放首歌我陪你听', 3600, true), 900);
 window.ClaudeTools = {
   mood: { get: () => ({ mood: moodCur, auto: moodAuto }), set: (k) => execCmd("mood " + k), auto: (v) => { moodAuto = !!v; } },
   lyric: { fetchLrc, parseLrc, colorize, toggle: (v) => execCmd("lyric " + (v ? "on" : "off")) },
