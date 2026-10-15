@@ -3,18 +3,39 @@
 //! ClaudeMusic Tauri 后端
 //! 核心能力: proxy 自定义协议 —— 把网易云 API/音频请求代理为同源请求,
 //! 解决 CORS 限制, 让前端 fetch 与 Web Audio 情绪分析(AnalyserNode)正常工作。
+//! 登录/歌单/VIP 取链: 直接走 weapi(AES-128-CBC + 原始 RSA)加密接口, Cookie 存进程内状态。
 
 use std::io::{Read, Write};
 use tauri::http::{Response, StatusCode};
 use tauri::Manager;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// ---- weapi 加密相关依赖 ----
+use aes::Aes128;
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use cbc::{Decryptor, Encryptor};
+use num_bigint::BigUint;
+use num_traits::Num;
+use rand::Rng;
+use qrcode::render::svg;
+
+type Aes128CbcEnc = Encryptor<Aes128>;
+type Aes128CbcDec = Decryptor<Aes128>;
+
 const MAX_BODY: u64 = 48 * 1024 * 1024; // 48MB 上限(网易云 mp3 约 3-10MB)
+
+// weapi 标准常量(公开): 首轮 AES key / IV / RSA 公钥
+const WEAPI_NONCE: &[u8] = b"0CoJUm6Qyw8W8jud";
+const WEAPI_IV: &[u8] = b"0102030405060708";
+const RSA_MODULUS: &str = "00e0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7b725152b3ab17a876aea8a5aa76d2e417629ec4ee341f56135fccf695280104e0312ecbda92557c93870114af6c9d05c4f7f0c3685b7a46bee255932575cce10b424d813cfe4875d3e82047b97ddef52741d546b8e289dc6935b3ece0462db0a22b8e7";
+const RSA_EXPONENT: u32 = 65537;
+const BASE62: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 /// 前端黑匣子日志: 写入 Tauri 标准日志目录(随安装位置自适应, 不硬编码盘符)
 /// 文件带 UTF-8 BOM(中文 Windows 下记事本/PowerShell 不乱码), 超 2MB 自动轮转
-#[tauri::command]
-fn app_log(app: tauri::AppHandle, msg: String) {
+fn log_msg(app: &tauri::AppHandle, msg: &str) {
     let dir = match app.path().app_log_dir() {
         Ok(d) => d,
         Err(_) => std::env::temp_dir(),
@@ -45,6 +66,11 @@ fn app_log(app: tauri::AppHandle, msg: String) {
     }
 }
 
+#[tauri::command]
+fn app_log(app: tauri::AppHandle, msg: String) {
+    log_msg(&app, &msg);
+}
+
 /// 域名白名单: 精确或点分后缀匹配(防 evil163.com 这类绕过)
 fn host_allowed(host: &str) -> bool {
     ["163.com", "126.net", "qq.com"].iter().any(|suffix| {
@@ -61,6 +87,18 @@ fn get_client() -> &'static reqwest::blocking::Client {
             .timeout(std::time::Duration::from_secs(60))
             .build()
             .expect("failed to build http client")
+    })
+}
+
+/// 登录/歌单专用客户端(浏览器 UA + Referer, 网易对非浏览器 UA 更敏感)
+static AUTH_CLIENT: std::sync::OnceLock<reqwest::blocking::Client> = std::sync::OnceLock::new();
+fn auth_client() -> &'static reqwest::blocking::Client {
+    AUTH_CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .user_agent(UA)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("failed to build auth client")
     })
 }
 
@@ -125,12 +163,289 @@ fn handle_proxy(target: String, range: Option<String>) -> Response<Vec<u8>> {
     }
 }
 
+// ==================== weapi 加解密 ====================
+
+fn aes_encrypt_b64(plain: &[u8], key: &[u8]) -> String {
+    let ct = Aes128CbcEnc::new_from_slices(key, WEAPI_IV)
+        .expect("aes key len")
+        .encrypt_padded_vec_mut::<Pkcs7>(plain);
+    B64.encode(ct)
+}
+
+fn aes_decrypt_b64(b64: &str, key: &[u8]) -> String {
+    let bytes = B64.decode(b64.trim()).unwrap_or_default();
+    let pt = Aes128CbcDec::new_from_slices(key, WEAPI_IV)
+        .expect("aes key len")
+        .decrypt_padded_vec_mut::<Pkcs7>(&bytes)
+        .unwrap_or_default();
+    String::from_utf8_lossy(&pt).into_owned()
+}
+
+fn random_secret_key() -> String {
+    let mut rng = rand::thread_rng();
+    (0..16).map(|_| BASE62[rng.gen_range(0..BASE62.len())] as char).collect()
+}
+
+/// 原始 RSA(无 padding): c = m^e mod n, 输入为字节串, 输出 hex
+fn rsa_encrypt(data: &str) -> String {
+    let m = BigUint::from_bytes_be(data.as_bytes());
+    let e = BigUint::from(RSA_EXPONENT);
+    let n = BigUint::from_str_radix(RSA_MODULUS, 16).expect("modulus");
+    let c = m.modpow(&e, &n);
+    let mut hex = c.to_str_radix(16);
+    if hex.len() % 2 == 1 {
+        hex.insert(0, '0');
+    }
+    hex
+}
+
+/// weapi 请求: 返回 (params, encSecKey) 表单字段
+fn weapi(obj: &serde_json::Value) -> (String, String) {
+    let text = obj.to_string();
+    let secret = random_secret_key();
+    let inner = aes_encrypt_b64(text.as_bytes(), WEAPI_NONCE);
+    let params = aes_encrypt_b64(inner.as_bytes(), secret.as_bytes());
+    let reversed: String = secret.chars().rev().collect();
+    let enc_sec_key = rsa_encrypt(&reversed);
+    (params, enc_sec_key)
+}
+
+/// POST weapi 接口, 返回解密后的 JSON; cookie 可选
+fn weapi_post(path: &str, obj: serde_json::Value, cookie: Option<&str>) -> Result<serde_json::Value, String> {
+    let (params, enc_sec_key) = weapi(&obj);
+    let mut req = auth_client()
+        .post(format!("https://music.163.com{path}"))
+        .header("Referer", "https://music.163.com/")
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .form(&[("params", params.as_str()), ("encSecKey", enc_sec_key.as_str())]);
+    if let Some(c) = cookie {
+        req = req.header("Cookie", c);
+    }
+    let resp = req.send().map_err(|e| format!("send: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().map_err(|e| format!("body: {e}"))?;
+    let dec = if body.trim_start().starts_with('{') {
+        body.clone()
+    } else {
+        aes_decrypt_b64(&body, WEAPI_NONCE)
+    };
+    serde_json::from_str(&dec)
+        .or_else(|_| serde_json::from_str(&body))
+        .map_err(|e| format!("parse {status}: {e} :: {}", &dec[..dec.len().min(200)]))
+}
+
+fn extract_csrf(cookie: &str) -> String {
+    cookie
+        .split(';')
+        .map(|kv| kv.trim())
+        .find_map(|kv| {
+            let mut it = kv.splitn(2, '=');
+            if it.next()? == "__csrf" {
+                it.next().map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+// ==================== 登录态 ====================
+
+#[derive(Clone)]
+struct LoginInfo {
+    cookie: String,
+    uid: i64,
+    nickname: String,
+    avatar: String,
+}
+
+struct LoginState(std::sync::Mutex<Option<LoginInfo>>);
+
+fn login_info(state: &tauri::State<'_, LoginState>) -> Option<LoginInfo> {
+    state.0.lock().ok()?.clone()
+}
+
+/// 用 Cookie 拉取用户信息(/api/nav), 失败返回 None
+fn fetch_profile(cookie: &str) -> Option<LoginInfo> {
+    let resp = auth_client()
+        .get("https://music.163.com/api/nav")
+        .header("Referer", "https://music.163.com/")
+        .header("Cookie", cookie)
+        .send()
+        .ok()?;
+    let j: serde_json::Value = serde_json::from_str(&resp.text().ok()?).ok()?;
+    let p = &j["data"]["profile"];
+    let uid = p["userId"].as_i64()?;
+    Some(LoginInfo {
+        cookie: cookie.to_string(),
+        uid,
+        nickname: p["nickname"].as_str().unwrap_or("").to_string(),
+        avatar: p["avatarUrl"].as_str().unwrap_or("").to_string(),
+    })
+}
+
+fn profile_json(info: &LoginInfo) -> serde_json::Value {
+    serde_json::json!({"nickname": info.nickname, "avatar": info.avatar, "uid": info.uid})
+}
+
+// ==================== Tauri commands: 登录/歌单 ====================
+
+#[tauri::command]
+fn netease_qr_key(app: tauri::AppHandle) -> Result<String, String> {
+    let j = weapi_post("/weapi/login/qrcode/unikey", serde_json::json!({"type": 1}), None)?;
+    log_msg(&app, &format!("LOGIN qr_key resp={j}"));
+    j["unikey"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| format!("no unikey: {j}"))
+}
+
+#[tauri::command]
+fn netease_qr_svg(unikey: String) -> Result<String, String> {
+    let content = format!("https://music.163.com/login?codekey={unikey}");
+    let code = qrcode::QrCode::new(content.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(code
+        .render::<svg::Color>()
+        .min_dimensions(240, 240)
+        .quiet_zone(true)
+        .build())
+}
+
+#[tauri::command]
+fn netease_qr_check(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, key: String) -> Result<serde_json::Value, String> {
+    let j = weapi_post("/weapi/login/qrcode/client/login", serde_json::json!({"key": key, "type": 1}), None)?;
+    let code = j["code"].as_i64().unwrap_or(-1);
+    log_msg(&app, &format!("LOGIN qr_check code={code}"));
+    let mut out = serde_json::json!({"code": code});
+    if code == 803 {
+        if let Some(cookie) = j["cookie"].as_str() {
+            let cookie = cookie.to_string();
+            if let Some(info) = fetch_profile(&cookie) {
+                log_msg(&app, &format!("LOGIN ok uid={} nick={}", info.uid, info.nickname));
+                out["profile"] = profile_json(&info);
+                out["cookie"] = serde_json::Value::String(cookie.clone());
+                *state.0.lock().unwrap() = Some(info);
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+fn netease_set_cookie(state: tauri::State<'_, LoginState>, cookie: String) -> Result<serde_json::Value, String> {
+    let cookie = cookie.trim().trim_matches('"').to_string();
+    let info = fetch_profile(&cookie).ok_or_else(|| "cookie 无效或已过期".to_string())?;
+    let out = profile_json(&info);
+    *state.0.lock().unwrap() = Some(info);
+    Ok(out)
+}
+
+#[tauri::command]
+fn netease_logout(state: tauri::State<'_, LoginState>) -> Result<(), String> {
+    *state.0.lock().unwrap() = None;
+    Ok(())
+}
+
+#[tauri::command]
+fn netease_status(state: tauri::State<'_, LoginState>) -> Result<Option<serde_json::Value>, String> {
+    Ok(login_info(&state).as_ref().map(profile_json))
+}
+
+#[tauri::command]
+fn netease_user_playlists(app: tauri::AppHandle, state: tauri::State<'_, LoginState>) -> Result<serde_json::Value, String> {
+    let info = login_info(&state).ok_or("未登录")?;
+    let csrf = extract_csrf(&info.cookie);
+    let j = weapi_post(
+        "/weapi/user/playlist",
+        serde_json::json!({"uid": info.uid, "limit": 1000, "offset": 0, "csrf_token": csrf}),
+        Some(&info.cookie),
+    )?;
+    let arr = j["playlist"].as_array().cloned().unwrap_or_default();
+    log_msg(&app, &format!("PLAYLIST user count={}", arr.len()));
+    let list: Vec<serde_json::Value> = arr
+        .into_iter()
+        .map(|p| {
+            serde_json::json!({
+                "id": p["id"],
+                "name": p["name"],
+                "trackCount": p["trackCount"],
+                "subscribed": p["subscribed"],
+            })
+        })
+        .collect();
+    Ok(serde_json::json!(list))
+}
+
+#[tauri::command]
+fn netease_playlist_detail(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, id: i64) -> Result<serde_json::Value, String> {
+    let cookie = login_info(&state).map(|i| i.cookie);
+    let url = format!("https://music.163.com/api/playlist/detail?id={id}&limit=1000&offset=0");
+    let mut req = auth_client().get(&url).header("Referer", "https://music.163.com/");
+    if let Some(c) = &cookie {
+        req = req.header("Cookie", c.as_str());
+    }
+    let resp = req.send().map_err(|e| e.to_string())?;
+    let j: serde_json::Value = serde_json::from_str(&resp.text().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let tracks = j["result"]["tracks"].as_array().cloned().unwrap_or_default();
+    log_msg(&app, &format!("PLAYLIST detail id={id} tracks={}", tracks.len()));
+    let list: Vec<serde_json::Value> = tracks
+        .into_iter()
+        .map(|t| {
+            let artist = t["ar"]
+                .as_array()
+                .map(|ar| {
+                    ar.iter()
+                        .filter_map(|a| a["name"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("/")
+                })
+                .unwrap_or_default();
+            serde_json::json!({
+                "id": t["id"],
+                "name": t["name"],
+                "artist": artist,
+                "album": t["al"]["name"],
+            })
+        })
+        .collect();
+    Ok(serde_json::json!(list))
+}
+
+#[tauri::command]
+fn netease_song_url(state: tauri::State<'_, LoginState>, id: i64) -> Result<String, String> {
+    let cookie = login_info(&state).map(|i| i.cookie);
+    let ids = format!("[{id}]");
+    let j = weapi_post(
+        "/weapi/song/enhance/player/url",
+        serde_json::json!({"ids": ids, "br": 320000}),
+        cookie.as_deref(),
+    )?;
+    let url = j["data"][0]["url"].as_str().unwrap_or("").to_string();
+    if url.is_empty() {
+        Err("no url".into())
+    } else {
+        Ok(url)
+    }
+}
+
 fn main() {
     for var in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"] {
         std::env::remove_var(var);
     }
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![app_log])
+        .manage(LoginState(std::sync::Mutex::new(None)))
+        .invoke_handler(tauri::generate_handler![
+            app_log,
+            netease_qr_key,
+            netease_qr_svg,
+            netease_qr_check,
+            netease_set_cookie,
+            netease_logout,
+            netease_status,
+            netease_user_playlists,
+            netease_playlist_detail,
+            netease_song_url
+        ])
         // 异步协议处理器: 网络请求在独立线程执行, 不阻塞 UI/WebView 线程
         .register_asynchronous_uri_scheme_protocol("proxy", |_ctx, request, responder| {
             let uri = request.uri().clone();

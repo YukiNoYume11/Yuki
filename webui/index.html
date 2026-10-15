@@ -196,9 +196,84 @@
   .mascot[data-anim="sleep"] .zzz { opacity: 1; animation: zf 2s ease-in-out infinite; }
   @keyframes zf { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-10px); opacity: 0; } }
   .ui-hl { outline: 1px solid var(--accent) !important; outline-offset: 3px; border-radius: 6px; }
+
+  /* ===== 侧边栏(歌单) ===== */
+  #sidebar {
+    width: 236px; flex-shrink: 0; margin-right: 14px;
+    background: var(--win); border: 1px solid #44413B; border-radius: 10px;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  body.sb-collapsed #sidebar { display: none; }
+  #sidebar .sb-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  #sidebar .sb-title { color: var(--accent); font-size: 13px; letter-spacing: 1px; }
+  .sb-btn {
+    background: none; border: 1px solid var(--border); color: var(--text); border-radius: 5px;
+    cursor: pointer; font-family: var(--mono); font-size: 11px; padding: 4px 9px; flex-shrink: 0;
+  }
+  .sb-btn:hover { border-color: var(--accent-dim); color: var(--accent); }
+  .sb-login { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 7px; }
+  .sb-flex { display: flex; gap: 6px; }
+  .sb-login input, .sb-import input {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 5px;
+    padding: 5px 7px; font-family: var(--mono); font-size: 11px; width: 100%; min-width: 0;
+  }
+  .sb-login input:focus, .sb-import input:focus { outline: none; border-color: var(--accent-dim); }
+  .sb-profile { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 9px; }
+  .sb-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--panel); flex-shrink: 0; }
+  .sb-user { flex: 1; min-width: 0; }
+  .sb-user .nm { color: var(--text); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sb-user .uid { color: var(--faint); font-size: 10px; }
+  .sb-import { padding: 10px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .sb-list { flex: 1; overflow-y: auto; padding: 6px; }
+  .sb-item { display: flex; align-items: baseline; gap: 8px; padding: 5px 8px; margin: 1px 0; border-radius: 5px; cursor: pointer; }
+  .sb-item:hover { background: var(--panel); }
+  .sb-item .nm { flex: 1; min-width: 0; color: var(--text); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sb-item .cnt { color: var(--faint); font-size: 10.5px; flex-shrink: 0; }
+  .sb-item.sub .nm { color: var(--dim); }
+  .sb-hint { color: var(--faint); font-size: 11.5px; padding: 8px 8px; line-height: 1.6; }
+  .sb-sec { color: var(--dim); font-size: 10.5px; padding: 8px 8px 4px; letter-spacing: 1px; }
+
+  /* ===== 模态弹窗(扫码登录) ===== */
+  .modal { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.55); }
+  .modal-box {
+    background: var(--win); border: 1px solid var(--accent-dim); border-radius: 12px; padding: 20px 24px;
+    display: flex; flex-direction: column; align-items: center; gap: 12px; min-width: 280px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.5);
+  }
+  .modal-title { color: var(--accent); font-size: 14px; letter-spacing: 1px; }
+  .qr-box { background: #fff; padding: 8px; border-radius: 6px; }
+  .qr-box svg { display: block; }
+  .qr-status { color: var(--dim); font-size: 12px; text-align: center; min-height: 18px; }
 </style>
 </head>
 <body>
+<aside id="sidebar">
+  <div class="sb-head">
+    <span class="sb-title">♪ 歌单</span>
+    <button class="sb-btn" id="sb-toggle" title="折叠侧栏">&laquo;</button>
+  </div>
+  <div class="sb-login" id="sb-login">
+    <button class="sb-btn" id="btn-login">扫码登录</button>
+    <div class="sb-flex">
+      <input id="cookie-input" type="text" placeholder="或粘贴 MUSIC_U Cookie" spellcheck="false" autocomplete="off">
+      <button class="sb-btn" id="btn-cookie">确定</button>
+    </div>
+  </div>
+  <div class="sb-profile" id="sb-profile" style="display:none">
+    <img class="sb-avatar" id="sb-avatar" alt="">
+    <div class="sb-user">
+      <div class="nm" id="sb-nickname">—</div>
+      <div class="uid" id="sb-uid"></div>
+    </div>
+    <button class="sb-btn" id="btn-logout" title="退出登录">&times;</button>
+  </div>
+  <div class="sb-import">
+    <input id="pl-input" type="text" placeholder="导入歌单 URL / ID &#8629;" spellcheck="false" autocomplete="off">
+  </div>
+  <div class="sb-list" id="sb-list">
+    <div class="sb-hint">登录后显示「我的歌单」</div>
+  </div>
+</aside>
 <div class="term">
   <div class="titlebar">
     <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
@@ -295,6 +370,14 @@
 </div>
 
 <audio id="audio"></audio>
+<div class="modal" id="qr-modal" style="display:none">
+  <div class="modal-box">
+    <div class="modal-title">网易云扫码登录</div>
+    <div class="qr-box" id="qr-box"></div>
+    <div class="qr-status" id="qr-status">请用网易云音乐 App 扫码</div>
+    <button class="sb-btn" id="qr-close">关闭</button>
+  </div>
+</div>
 <script>
 /* ==================== Tauri 桥接层 ==================== */
 (function () {
@@ -632,6 +715,154 @@ function syncLrc() {
   }
 }
 
+/* ==================== 登录 / 歌单(网易云) ==================== */
+function cmInvoke(cmd, args) {
+  if (!window.__TAURI_INTERNALS__) return Promise.reject(new Error("非 Tauri 环境"));
+  return window.__TAURI_INTERNALS__.invoke(cmd, args || {});
+}
+let cmLoggedIn = false, loginTimer = null;
+
+function showLoggedOut() {
+  cmLoggedIn = false;
+  $("sb-login").style.display = "";
+  $("sb-profile").style.display = "none";
+  $("sb-list").innerHTML = '<div class="sb-hint">登录后显示「我的歌单」</div>';
+}
+async function refreshLogin() {
+  try {
+    const st = await cmInvoke("netease_status");
+    if (st) {
+      cmLoggedIn = true;
+      $("sb-login").style.display = "none";
+      $("sb-profile").style.display = "";
+      $("sb-nickname").textContent = st.nickname || "—";
+      $("sb-uid").textContent = "uid " + st.uid;
+      if (st.avatar) { $("sb-avatar").src = st.avatar; $("sb-avatar").style.display = ""; }
+      else $("sb-avatar").style.display = "none";
+      loadMyPlaylists();
+    } else showLoggedOut();
+  } catch (e) { showLoggedOut(); }
+}
+async function startQrLogin() {
+  $("qr-modal").style.display = "flex";
+  $("qr-status").textContent = "获取二维码…";
+  try {
+    const unikey = await cmInvoke("netease_qr_key");
+    const svg = await cmInvoke("netease_qr_svg", { unikey });
+    $("qr-box").innerHTML = svg;
+    $("qr-status").textContent = "请用网易云音乐 App 扫码";
+    pollQr(unikey);
+  } catch (e) {
+    $("qr-status").textContent = "二维码获取失败: " + (e && e.message || e);
+  }
+}
+async function pollQr(unikey) {
+  clearTimeout(loginTimer);
+  try {
+    const r = await cmInvoke("netease_qr_check", { key: unikey });
+    const code = r && r.code;
+    if (code === 803) {
+      $("qr-status").textContent = "登录成功！";
+      if (r.cookie) { try { localStorage.setItem("cm_music_u", r.cookie); } catch (e) {} }
+      await refreshLogin();
+      setTimeout(() => { $("qr-modal").style.display = "none"; }, 800);
+      return;
+    } else if (code === 800) {
+      $("qr-status").textContent = "二维码已过期，正在刷新…";
+      loginTimer = setTimeout(startQrLogin, 800);
+      return;
+    } else if (code === 802) {
+      $("qr-status").textContent = "已扫码，请在手机上确认";
+    } else if (code === 801) {
+      $("qr-status").textContent = "请用网易云音乐 App 扫码";
+    }
+    loginTimer = setTimeout(() => pollQr(unikey), 2000);
+  } catch (e) {
+    $("qr-status").textContent = "轮询失败: " + (e && e.message || e);
+    loginTimer = setTimeout(() => pollQr(unikey), 3000);
+  }
+}
+async function pasteCookie(c) {
+  c = (c || "").trim();
+  if (!c) { cmSay("请先粘贴 Cookie", 2600, true); return; }
+  try {
+    await cmInvoke("netease_set_cookie", { cookie: c });
+    try { localStorage.setItem("cm_music_u", c); } catch (e) {}
+    await refreshLogin();
+    cmSay("Cookie 登录成功", 2600, true);
+  } catch (e) {
+    cmSay("Cookie 无效或已过期", 3200, true);
+  }
+}
+function doLogout() {
+  cmInvoke("netease_logout").then(() => {
+    try { localStorage.removeItem("cm_music_u"); } catch (e) {}
+    showLoggedOut();
+    cmSay("已退出登录", 2600, true);
+  });
+}
+async function loadMyPlaylists() {
+  try {
+    const list = await cmInvoke("netease_user_playlists");
+    renderPlaylists(list || []);
+  } catch (e) {
+    $("sb-list").innerHTML = '<div class="sb-hint">歌单加载失败: ' + esc(String(e && e.message || e)) + '</div>';
+  }
+}
+function renderPlaylists(list) {
+  if (!list || !list.length) { $("sb-list").innerHTML = '<div class="sb-hint">暂无歌单</div>'; return; }
+  const created = list.filter(p => !p.subscribed);
+  const subbed = list.filter(p => p.subscribed);
+  let html = "";
+  const sec = (t) => '<div class="sb-sec">' + t + '</div>';
+  const item = (p) => '<div class="sb-item' + (p.subscribed ? " sub" : "") + '" data-id="' + p.id + '"><span class="nm">' + esc(p.name || "未命名") + '</span><span class="cnt">' + (p.trackCount || 0) + '</span></div>';
+  if (created.length) { html += sec("创建的歌单"); html += created.map(item).join(""); }
+  if (subbed.length) { html += sec("收藏的歌单"); html += subbed.map(item).join(""); }
+  $("sb-list").innerHTML = html;
+  $("sb-list").querySelectorAll(".sb-item").forEach(el => {
+    el.addEventListener("click", () => importPlaylist(parseInt(el.dataset.id, 10), el.querySelector(".nm").textContent));
+  });
+}
+function parsePlaylistId(s) {
+  const t = (s || "").trim();
+  const m = t.match(/id[=\/](\d+)/) || t.match(/^(\d+)$/);
+  return m ? parseInt(m[1], 10) : null;
+}
+async function importPlaylist(id, name) {
+  if (!id) return;
+  toastLike("导入歌单「" + (name || id) + "」…");
+  try {
+    const tracks = await cmInvoke("netease_playlist_detail", { id });
+    if (!tracks || !tracks.length) { echo("<span class='p'>⏺</span> 歌单为空或无法读取", "err"); return; }
+    const mapped = tracks.map(t => ({
+      id: t.id, name: t.name, artist: t.artist, album: t.album, src: "netease",
+      outer: "https://music.163.com/song/media/outer/url?id=" + t.id + ".mp3",
+    }));
+    state.queue = mapped; renderRows(mapped, false); loadTrack(0);
+    echo("<span class='p'>⏺</span> 已导入歌单「" + esc(name || id) + "」共 " + mapped.length + " 首", "ok");
+  } catch (e) {
+    echo("<span class='p'>⏺</span> 导入失败: " + esc(String(e && e.message || e)), "err");
+  }
+}
+
+/* 解析可播放 URL: 登录态下先取 VIP 可播链接, 失败回退 outer/url */
+async function setAudioSrc(t) {
+  let rawUrl = t.outer || t.url || t.url_resolved;
+  if (cmLoggedIn && t.src === "netease" && t.id) {
+    try { const u = await cmInvoke("netease_song_url", { id: t.id }); if (u) rawUrl = u; } catch (e) {}
+  }
+  if (window.__CM_IS_TAURI__ && /music\.163\.com|126\.net/.test(rawUrl)) {
+    try {
+      const u = await window.__CM_PROXY__(rawUrl);
+      audio.crossOrigin = "anonymous";
+      audio.src = u;
+      return;
+    } catch (e) { /* 直连兜底 */ }
+  }
+  audio.crossOrigin = null;
+  audio.src = rawUrl;
+}
+
 /* ==================== 播放核心 ==================== */
 function fmt(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s/60) + ":" + String(s%60).padStart(2,"0"); }
 function setPlayingUI(on) {
@@ -654,20 +885,12 @@ function loadTrack(i) {
   state.cur = (i + tries) % state.queue.length;
   const t = state.queue[state.cur];
   state.seekable = !!t.outer;
-  const rawUrl = t.outer || t.url || t.url_resolved;
   resetSongStats(); fluxHist = [];
-  window.cmLog && window.cmLog("LOAD name=" + t.name + " src=" + String(rawUrl).slice(0, 100));
-  if (window.__CM_IS_TAURI__ && /music\.163\.com|126\.net/.test(rawUrl)) {
-    window.__CM_PROXY__(rawUrl).then(u => {
-      audio.crossOrigin = "anonymous";
-      audio.src = u;
-    }).catch(() => { audio.crossOrigin = null; audio.src = rawUrl; });
-  } else {
-    audio.crossOrigin = null;
-    audio.src = rawUrl;
-  }
-  audio.volume = state.vol;
-  audio.play().catch(() => {});
+  window.cmLog && window.cmLog("LOAD name=" + t.name + " src=" + String(t.outer || t.url || t.url_resolved).slice(0, 100));
+  setAudioSrc(t).then(() => {
+    audio.volume = state.vol;
+    audio.play().catch(() => {});
+  });
   document.querySelectorAll(".row").forEach(el => el.classList.remove("on"));
   const rows = document.querySelectorAll("#out .row");
   if (rows[state.cur]) { rows[state.cur].classList.add("on"); rows[state.cur].scrollIntoView({ block: "nearest" }); }
@@ -931,10 +1154,25 @@ function execCmd(raw) {
     case "demo": state.queue = DEMO_TRACKS.slice(); renderRows(DEMO_TRACKS, false); loadTrack(0); break;
     case "diag": doDiag(); break;
     case "help":
-      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · mood auto|欢快|平静|忧郁|高潮 · lyric on|off · demo · diag · clear", "dim"); break;
+      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · mood auto|欢快|平静|忧郁|高潮 · lyric on|off · login [cookie 值] · logout · my · playlist &lt;url|id&gt; · demo · diag · clear", "dim"); break;
     case "clear":
       document.querySelectorAll("#out > .ln, #out > .row").forEach(el => el.remove());
       break;
+    case "login":
+      if (arg.startsWith("cookie ")) pasteCookie(arg.slice(7));
+      else startQrLogin();
+      break;
+    case "logout": doLogout(); break;
+    case "my":
+      if (cmLoggedIn) loadMyPlaylists();
+      else cmSay("请先 login 登录", 2600, true);
+      break;
+    case "playlist": {
+      const pid = parsePlaylistId(arg);
+      if (pid) importPlaylist(pid, arg);
+      else cmSay("用法: playlist <歌单URL或ID>", 2600, true);
+      break;
+    }
     default: doPlay(s);
   }
 }
@@ -1003,6 +1241,29 @@ document.addEventListener("keyup", (e) => {
     cmWalkTo($("progress-widget"), (d > 0 ? "快进 " : "快退 ") + 5 + " 秒");
   }
 });
+
+/* 侧边栏 / 扫码弹窗事件 */
+$("btn-login").addEventListener("click", startQrLogin);
+$("btn-cookie").addEventListener("click", () => pasteCookie($("cookie-input").value));
+$("cookie-input").addEventListener("keydown", (e) => { if (e.key === "Enter") pasteCookie(e.target.value); });
+$("btn-logout").addEventListener("click", doLogout);
+$("qr-close").addEventListener("click", () => { $("qr-modal").style.display = "none"; clearTimeout(loginTimer); });
+$("pl-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { const pid = parsePlaylistId(e.target.value); if (pid) { importPlaylist(pid); e.target.value = ""; } }
+});
+$("sb-toggle").addEventListener("click", () => document.body.classList.toggle("sb-collapsed"));
+
+/* 启动时恢复登录态 */
+(function restoreLogin() {
+  if (!window.__CM_IS_TAURI__) { showLoggedOut(); return; }
+  let c = null;
+  try { c = localStorage.getItem("cm_music_u"); } catch (e) {}
+  if (c) {
+    cmInvoke("netease_set_cookie", { cookie: c }).then(() => refreshLogin()).catch(() => showLoggedOut());
+  } else {
+    showLoggedOut();
+  }
+})();
 
 setTimeout(() => cmSay('嗨！我是 Claude，放首歌我陪你听', 3600, true), 900);
 window.ClaudeTools = {
