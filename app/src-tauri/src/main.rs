@@ -126,6 +126,9 @@ fn handle_proxy(target: String, range: Option<String>) -> Response<Vec<u8>> {
 }
 
 fn main() {
+    for var in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"] {
+        std::env::remove_var(var);
+    }
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![app_log])
         // 异步协议处理器: 网络请求在独立线程执行, 不阻塞 UI/WebView 线程

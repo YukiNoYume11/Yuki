@@ -568,6 +568,7 @@ async function fetchLrc(id) {
   try {
     const r = await fetch("https://music.163.com/api/song/lyric?id=" + id + "&lv=1&kv=1&tv=-1", { signal: AbortSignal.timeout(6000) });
     const d = await r.json();
+    window.cmLog && window.cmLog('FETCHLRC http=' + r.status + ' hasLrc=' + !!(d.lrc && d.lrc.lyric));
     return d.lrc && d.lrc.lyric ? d.lrc.lyric : null;
   } catch (e) { return null; }
 }
@@ -599,8 +600,10 @@ function nextDemoLyric() {
 async function loadLyrics(track) {
   stopLyrics();
   lrcLines = []; lrcPtr = 0;
+  window.cmLog && window.cmLog('LYRIC-CALL id=' + (track && track.id) + ' mode=' + lyricMode);
   if (track && track.id && lyricMode) {
     const lrc = await fetchLrc(track.id);
+    window.cmLog && window.cmLog('FETCHLRC got=' + (lrc ? lrc.length : 'null'));
     if (lrc) lrcLines = parseLrc(lrc);
     window.cmLog && window.cmLog("LRC id=" + track.id + " lines=" + lrcLines.length);
   }
@@ -1001,7 +1004,7 @@ document.addEventListener("keyup", (e) => {
   }
 });
 
-setTimeout(() => cmSay("嗨！我是 Claude，放首歌我陪你听", 3600, true), 900);
+setTimeout(() => cmSay('"嗨！我是 Claude，放首歌我陪你听", 3600, true), 900);
 window.ClaudeTools = {
   mood: { get: () => ({ mood: moodCur, auto: moodAuto }), set: (k) => execCmd("mood " + k), auto: (v) => { moodAuto = !!v; } },
   lyric: { fetchLrc, parseLrc, colorize, toggle: (v) => execCmd("lyric " + (v ? "on" : "off")) },
