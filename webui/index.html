@@ -64,8 +64,6 @@
   .row .idx { color: var(--faint); flex-shrink: 0; width: 26px; text-align: right; }
   .row .nm { color: var(--text); }
   .row.on .nm { color: var(--accent); }
-  .row.dis { opacity: .45; }
-  .row.dis:hover { background: none; cursor: not-allowed; }
   .row .ar { color: var(--faint); font-size: 12px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .row .tg { color: var(--faint); font-size: 11px; flex-shrink: 0; }
   .row .tg.live { color: var(--accent); }
@@ -231,7 +229,7 @@
     </div>
 
     <div class="out" id="out">
-      <div class="ln dim">ClaudeMusic v0.4.6 — play 关键词 / radio 名称 / demo / mood / diag / help · ↑历史 Tab补全</div>
+      <div class="ln dim">ClaudeMusic v0.4.3 — play 关键词 / radio 名称 / demo / mood / diag / help</div>
     </div>
 
     <div class="viz-strip">
@@ -637,9 +635,6 @@ function setPlayingUI(on) {
   state.playing = on;
   $("btn-play").textContent = on ? "❚❚" : "▶";
   mascotSet(on ? MOODS[moodCur].anim : "idle");
-  if ("mediaSession" in navigator) {
-    try { navigator.mediaSession.playbackState = on ? "playing" : "paused"; } catch (e) {}
-  }
 }
 function loadTrack(i) {
   if (!state.queue.length) return;
@@ -670,20 +665,11 @@ function loadTrack(i) {
   }
   audio.volume = state.vol;
   audio.play().catch(() => {});
-  /* 电台流: 时间栏显示 LIVE */
-  if (!t.outer && (t.src === "radio" || t.url)) {
-    $("time-cur").textContent = "● LIVE";
-    $("p-fill").style.width = "100%";
-  }
   document.querySelectorAll(".row").forEach(el => el.classList.remove("on"));
   const rows = document.querySelectorAll("#out .row");
   if (rows[state.cur]) { rows[state.cur].classList.add("on"); rows[state.cur].scrollIntoView({ block: "nearest" }); }
   $("np-line").innerHTML = "<b>" + esc(t.name) + "</b> — " + esc(t.artist || t.country || "");
   echo("<span class='p'>▶</span> 正在播放: <b>" + esc(t.name) + "</b> — " + esc(t.artist || t.country || ""), "");
-  /* Windows 媒体浮窗 / 多媒体键 */
-  if ("mediaSession" in navigator) {
-    try { navigator.mediaSession.metadata = new MediaMetadata({ title: t.name, artist: t.artist || t.country || "", album: t.album || "ClaudeMusic" }); } catch (e) {}
-  }
   loadLyrics(t);
   cmWalkTo($("np-line"));
   cmSay("正在播放: " + t.name, 3000, true);
@@ -780,7 +766,6 @@ function renderRows(list, isRadio) {
       if (t.src === "qq") { echo("<span class='p'>⏺</span> QQ 音乐播放需先登录（登录功能开发中）", "err"); cmSay("QQ的要登录才行，先听网易云版本？", 3200, true); return; }
       loadTrack(i);
     });
-    if (t.src === "qq") d.classList.add("dis");
     out.appendChild(d);
   });
   out.scrollTop = out.scrollHeight;
@@ -810,15 +795,8 @@ async function doRadio(q) {
   state.queue = radios; renderRows(radios, true); loadTrack(0);
 }
 async function radioSearch(q) {
-  /* 官方建议: 随机选镜像提高可用性 */
-  const RB_MIRRORS = [
-    "https://de1.api.radio-browser.info", "https://de2.api.radio-browser.info",
-    "https://fi1.api.radio-browser.info", "https://nl1.api.radio-browser.info",
-    "https://at1.api.radio-browser.info",
-  ];
   try {
-    const base = RB_MIRRORS[Math.floor(Math.random() * RB_MIRRORS.length)];
-    const r = await fetch(base + "/json/stations/search?name=" + encodeURIComponent(q) + "&limit=15&hidebroken=true&order=votes&reverse=true", { signal: AbortSignal.timeout(6000) });
+    const r = await fetch("https://de1.api.radio-browser.info/json/stations/search?name=" + encodeURIComponent(q) + "&limit=15&hidebroken=true&order=votes&reverse=true", { signal: AbortSignal.timeout(6000) });
     return (await r.json()).map(s => ({
       name: s.name.trim(), src: "radio", artist: s.country + " · " + (s.tags || "").split(",").slice(0,2).join("/"),
       url: s.url_resolved || s.url, country: s.country,
@@ -865,7 +843,6 @@ function setVol(v) {
   state.vol = Math.max(0, Math.min(1, v));
   audio.volume = state.vol;
   $("v-fill").style.width = state.vol * 100 + "%"; $("vol-num").textContent = Math.round(state.vol * 100);
-  try { localStorage.setItem("cm_vol", String(state.vol)); } catch (e) {}
 }
 bindBar($("vol-bar"), (p) => { setVol(p); cmWalkTo($("vol-widget"), "音量 " + Math.round(p*100) + "%"); });
 
@@ -884,7 +861,6 @@ function setSpeed(idx) {
   speedIdx = ((idx % SPEEDS.length) + SPEEDS.length) % SPEEDS.length;
   audio.playbackRate = SPEEDS[speedIdx];
   $("btn-speed").textContent = SPEED_LABELS[speedIdx];
-  try { localStorage.setItem("cm_speed_idx", String(speedIdx)); } catch (e) {}
 }
 $("btn-rw").addEventListener("click", () => {
   if (state.seekable && audio.duration) {
@@ -902,18 +878,6 @@ $("btn-speed").addEventListener("click", () => {
   setSpeed(speedIdx + 1);
   cmWalkTo($("btn-speed"), "倍速 " + SPEED_LABELS[speedIdx]);
 });
-
-/* 系统媒体键 / Windows 媒体浮窗 */
-if ("mediaSession" in navigator) {
-  try {
-    navigator.mediaSession.setActionHandler("play", () => audio.play().catch(() => {}));
-    navigator.mediaSession.setActionHandler("pause", () => audio.pause());
-    navigator.mediaSession.setActionHandler("previoustrack", () => $("btn-prev").click());
-    navigator.mediaSession.setActionHandler("nexttrack", () => $("btn-next").click());
-    navigator.mediaSession.setActionHandler("seekbackward", () => { if (state.seekable) audio.currentTime = Math.max(0, audio.currentTime - 10); });
-    navigator.mediaSession.setActionHandler("seekforward", () => { if (state.seekable) audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 10); });
-  } catch (e) {}
-}
 
 /* ==================== 命令 ==================== */
 function execCmd(raw) {
@@ -933,7 +897,6 @@ function execCmd(raw) {
       if (arg === "auto" || !arg) { moodAuto = true; $("mood-src").textContent = "(auto)"; cmSay("情绪自动识别已开启", 3000, true); }
       else if (map[arg]) { moodAuto = false; setMood(map[arg]); }
       else cmSay("用法: mood auto|欢快|平静|忧郁|高潮", 3200, true);
-      try { localStorage.setItem("cm_mood_auto", moodAuto ? "1" : "0"); } catch (e) {}
       break;
     }
     case "lyric":
@@ -942,7 +905,6 @@ function execCmd(raw) {
       if (!lyricMode) stopLyrics();
       else if (state.queue[state.cur]) loadLyrics(state.queue[state.cur]);
       cmSay("字幕已" + (lyricMode ? "开启" : "关闭"), 2600, true);
-      try { localStorage.setItem("cm_lyric", lyricMode ? "1" : "0"); } catch (e) {}
       break;
     case "ff": {
       const n = parseFloat(arg) || 10;
@@ -973,45 +935,7 @@ function execCmd(raw) {
     default: doPlay(s);
   }
 }
-/* 命令历史 + Tab 补全 + 设置持久化 */
-const CMDS = ["play", "radio", "next", "prev", "pause", "resume", "vol", "mood", "lyric", "speed", "ff", "rw", "demo", "diag", "help", "clear"];
-const cmdHistory = [];
-try { JSON.parse(localStorage.getItem("cm_history") || "[]").forEach(h => cmdHistory.push(h)); } catch (e) {}
-let histIdx = -1, histDraft = "";
-
-function saveHistory(v) {
-  if (cmdHistory[cmdHistory.length - 1] !== v) cmdHistory.push(v);
-  while (cmdHistory.length > 50) cmdHistory.shift();
-  try { localStorage.setItem("cm_history", JSON.stringify(cmdHistory)); } catch (e) {}
-}
-$("cmd").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    const v = e.target.value.trim();
-    if (v) saveHistory(v);
-    execCmd(e.target.value); e.target.value = "";
-    histIdx = -1; histDraft = "";
-    moveCaret();
-  } else if (e.key === "ArrowUp") {
-    e.preventDefault();
-    if (!cmdHistory.length) return;
-    if (histIdx === -1) { histDraft = e.target.value; histIdx = cmdHistory.length - 1; }
-    else if (histIdx > 0) histIdx--;
-    e.target.value = cmdHistory[histIdx] || ""; moveCaret();
-  } else if (e.key === "ArrowDown") {
-    e.preventDefault();
-    if (histIdx === -1) return;
-    histIdx++;
-    if (histIdx >= cmdHistory.length) { histIdx = -1; e.target.value = histDraft; }
-    else e.target.value = cmdHistory[histIdx];
-    moveCaret();
-  } else if (e.key === "Tab") {
-    e.preventDefault();
-    const v = e.target.value.trimStart();
-    if (!v || v.includes(" ")) return;
-    const m = CMDS.filter(c => c.startsWith(v.toLowerCase()));
-    if (m.length) { e.target.value = m[0] + " "; moveCaret(); }
-  }
-});
+$("cmd").addEventListener("keydown", (e) => { if (e.key === "Enter") { execCmd(e.target.value); e.target.value = ""; } });
 
 /* 光标竖线: 跟随文字 + 失焦隐藏 */
 const cmdEl = $("cmd"), caretEl = $("caret"), mirrorEl = $("cmirror");
@@ -1076,16 +1000,6 @@ document.addEventListener("keyup", (e) => {
     cmWalkTo($("progress-widget"), (d > 0 ? "快进 " : "快退 ") + 5 + " 秒");
   }
 });
-
-/* 启动恢复持久化设置 */
-try {
-  const sv = parseFloat(localStorage.getItem("cm_vol"));
-  if (!isNaN(sv)) setVol(sv);
-  const si = parseInt(localStorage.getItem("cm_speed_idx"));
-  if (!isNaN(si)) setSpeed(si);
-  if (localStorage.getItem("cm_mood_auto") === "0") { moodAuto = false; $("mood-src").textContent = "(手动)"; }
-  if (localStorage.getItem("cm_lyric") === "0") { lyricMode = false; $("subtitle-layer").style.display = "none"; }
-} catch (e) {}
 
 setTimeout(() => cmSay("嗨！我是 Claude，放首歌我陪你听", 3600, true), 900);
 window.ClaudeTools = {

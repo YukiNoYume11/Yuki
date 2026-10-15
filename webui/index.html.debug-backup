@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-mood="calm">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClaudeMusic — claude — 120×40</title>
+<style>
+  :root {
+    --bg: #191817; --win: #1F1E1D; --panel: #262522; --panel2: #2C2B28;
+    --border: #3A3833; --text: #E8E6E3; --dim: #9C9993; --faint: #6B6963;
+    --accent: #D97757; --accent-dim: #B85C3D; --accent-dark: #8F4527;
+    --k1: #E8A87C; --k2: #E86A5E; --k3: #9AB8D8; --ok: #7BAE7F;
+    --mono: ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace;
+  }
+  html[data-mood="excited"] { --accent: #E8825C; --k2: #FF6B4A; }
+  html[data-mood="peak"] { --accent: #F2906A; --k1: #FFD9A0; --k2: #FF5540; }
+  html[data-mood="calm"] { --accent: #D97757; }
+  html[data-mood="melancholy"] { --accent: #7E8CA0; --k1: #9FB4CC; --k2: #7A8CA8; --k3: #62778F; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: #0D0C0B; color: var(--text); font-family: var(--mono); font-size: 13px;
+    display: flex; align-items: stretch; justify-content: center; padding: 14px;
+  }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  .term {
+    flex: 1; max-width: 1080px; display: flex; flex-direction: column;
+    background: var(--win); border: 1px solid #44413B; border-radius: 10px; overflow: hidden;
+    position: relative;
+  }
+  .titlebar {
+    display: flex; align-items: center; padding: 8px 12px; gap: 8px;
+    background: #232220; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot.r { background: #FF5F57; } .dot.y { background: #FEBC2E; } .dot.g { background: #28C840; }
+  .titlebar .t { flex: 1; text-align: center; color: var(--dim); font-size: 12px; }
+
+  .term-body { flex: 1; display: flex; flex-direction: column; padding: 14px 18px 10px; min-height: 0; }
+
+  .welcome {
+    border: 1.5px solid var(--accent); border-radius: 12px;
+    padding: 12px 18px; display: flex; align-items: center; gap: 16px;
+    flex-shrink: 0; background: rgba(217,119,87,.04);
+  }
+  .welcome h1 { font-size: 21px; font-weight: 500; letter-spacing: .5px; }
+  .welcome .meta { color: var(--dim); font-size: 13px; margin-top: 4px; }
+  .welcome .path { color: var(--faint); font-size: 13px; margin-top: 2px; }
+  .welcome .right { margin-left: auto; text-align: right; color: var(--faint); font-size: 11px; line-height: 1.9; flex-shrink: 0; }
+  .welcome .right b { color: var(--accent); font-weight: 500; }
+  .mini-mascot { flex-shrink: 0; opacity: .9; }
+
+  .out { flex: 1; overflow-y: auto; padding: 10px 4px 8px; min-height: 0; position: relative; }
+  .ln { line-height: 1.75; white-space: pre-wrap; word-break: break-all; }
+  .ln .p { color: var(--accent); }
+  .ln.dim { color: var(--faint); }
+  .ln.ok { color: var(--ok); }
+  .ln.err { color: #E86A5E; }
+  .row { cursor: pointer; padding: 1px 8px; margin: 0 -8px; border-radius: 4px; display: flex; gap: 10px; align-items: baseline; }
+  .row:hover { background: var(--panel); }
+  .row.on { background: var(--panel2); }
+  .row .idx { color: var(--faint); flex-shrink: 0; width: 26px; text-align: right; }
+  .row .nm { color: var(--text); }
+  .row.on .nm { color: var(--accent); }
+  .row .ar { color: var(--faint); font-size: 12px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .tg { color: var(--faint); font-size: 11px; flex-shrink: 0; }
+  .row .tg.live { color: var(--accent); }
+
+  /* ===== 可视化条带(固定高度, 不随输出区滚动) ===== */
+  .viz-strip {
+    flex-shrink: 0; position: relative; height: 118px; overflow: hidden;
+    border-top: 1px solid var(--border);
+    background: linear-gradient(to top, rgba(18,16,14,.95) 45%, rgba(18,16,14,0));
+  }
+  .eq { position: absolute; left: 0; right: 0; bottom: 0; height: 100%; display: flex; align-items: flex-end; gap: 3px; opacity: .75; pointer-events: none; z-index: 1; }
+  .eq i { flex: 1; background: var(--accent); border-radius: 1px 1px 0 0; height: 6%; min-width: 2px; transition: height .07s linear; }
+
+  /* ===== 独立字幕层(纯文字, 不遮频谱) ===== */
+  #subtitle-layer {
+    position: absolute; inset: 0; z-index: 2;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+    padding: 8px 24px 10px; pointer-events: none;
+  }
+  #subtitle-text {
+    font-size: 27px; font-weight: 500; letter-spacing: 2px; text-align: center;
+    color: var(--text); text-shadow: 0 2px 8px rgba(0,0,0,.7); line-height: 1.45;
+  }
+  #subtitle-text .k1 { color: var(--k1); }
+  #subtitle-text .k2 { color: var(--k2); }
+  #subtitle-text .k3 { color: var(--k3); }
+  html[data-mood="excited"] #subtitle-text, html[data-mood="peak"] #subtitle-text { animation: bin .4s cubic-bezier(.2,1.6,.4,1); }
+  html[data-mood="peak"] #subtitle-text .k2 { display: inline-block; animation: kw .5s ease-in-out infinite alternate; }
+  html[data-mood="calm"] #subtitle-text { animation: fin .8s ease; }
+  html[data-mood="melancholy"] #subtitle-text { animation: flo 1.5s ease; font-size: 22px; }
+  @keyframes bin { 0% { transform: scale(.7); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+  @keyframes fin { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  @keyframes flo { from { transform: translateY(26px); opacity: 0; letter-spacing: 6px; } to { transform: translateY(0); opacity: 1; letter-spacing: 2px; } }
+  @keyframes kw { from { transform: rotate(-2deg) scale(1); } to { transform: rotate(2deg) scale(1.07); } }
+  #subtitle-src { font-size: 10px; color: var(--faint); margin-top: 6px; letter-spacing: 1px; }
+
+  /* 频谱条(现位于 viz-strip 内, 见下方) */
+
+  /* ===== 播放条 ===== */
+  .player { flex-shrink: 0; padding: 4px 0 8px; }
+  .prow { display: flex; align-items: center; gap: 10px; }
+  .btn {
+    background: none; border: 1px solid var(--border); color: var(--text);
+    width: 26px; height: 26px; border-radius: 6px; cursor: pointer;
+    font-family: var(--mono); font-size: 11px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .btn:hover { border-color: var(--accent-dim); color: var(--accent); }
+  .btn.main { background: var(--accent); border-color: var(--accent); color: #1F1E1D; }
+  .pbar { flex: 1; height: 12px; display: flex; align-items: center; cursor: pointer; }
+  .pbar .tr { width: 100%; height: 3px; background: var(--border); border-radius: 2px; position: relative; }
+  .pbar .fl { position: absolute; left: 0; top: 0; height: 100%; background: var(--accent); width: 0%; border-radius: 2px; }
+  .tm { color: var(--faint); font-size: 11px; width: 80px; }
+  .np { color: var(--dim); font-size: 12px; max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .np b { color: var(--text); font-weight: 500; }
+  .vol { display: flex; align-items: center; gap: 6px; width: 130px; flex-shrink: 0; }
+  .vol .pbar { width: 80px; flex: none; }
+  .vol .lb { color: var(--faint); font-size: 10px; }
+
+  .cmdline { flex-shrink: 0; position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 2px; }
+  .cmdline .p { color: var(--accent); font-size: 15px; flex-shrink: 0; }
+  .cmdline input { flex: 1; background: none; border: none; outline: none; color: var(--text); font-family: var(--mono); font-size: 14px; caret-color: transparent; }
+  .cursor {
+    position: absolute; width: 9px; height: 17px; background: var(--accent);
+    animation: blink 1.06s step-end infinite; pointer-events: none; z-index: 2;
+    display: none;
+  }
+  .cursor.on { display: block; }
+  #cmirror {
+    position: absolute; left: 0; top: -999px; visibility: hidden; white-space: pre;
+    font-family: var(--mono); font-size: 14px;
+  }
+
+  .statusbar {
+    flex-shrink: 0; display: flex; align-items: center; gap: 14px;
+    padding: 7px 2px 2px; color: var(--faint); font-size: 11.5px; border-top: 1px solid #26251F;
+  }
+  .statusbar .arrows { color: var(--dim); letter-spacing: 2px; }
+  .statusbar b { color: var(--accent); font-weight: 500; }
+  .statusbar .right { margin-left: auto; }
+
+  /* ===== Claude 浮动形象层(独立于所有UI元素) ===== */
+  #cm-layer { position: fixed; inset: 0; pointer-events: none; z-index: 90; }
+  #cm-mascot {
+    position: absolute; width: 88px; height: 72px;
+    transition: left .85s cubic-bezier(.45,.05,.3,1), top .85s cubic-bezier(.45,.05,.3,1);
+    pointer-events: auto; cursor: pointer;
+  }
+  #cm-mascot svg { filter: drop-shadow(0 3px 4px rgba(0,0,0,.45)); }
+  #cm-bubble {
+    position: absolute; bottom: calc(100% + 10px); left: 60%;
+    width: max-content; max-width: 260px;
+    background: var(--panel2); border: 1.5px solid var(--accent-dim); color: var(--text);
+    padding: 7px 11px; border-radius: 10px; font-size: 12px; font-family: var(--mono);
+    line-height: 1.5; white-space: normal; opacity: 0; transform: translateY(6px) scale(.92);
+    transition: opacity .25s, transform .25s; pointer-events: none;
+    box-shadow: 0 4px 14px rgba(0,0,0,.4);
+  }
+  #cm-bubble.show { opacity: 1; transform: translateY(0) scale(1); }
+  #cm-bubble::after {
+    content: ""; position: absolute; bottom: -6px; left: 18px;
+    width: 9px; height: 9px; background: var(--panel2);
+    border-right: 1.5px solid var(--accent-dim); border-bottom: 1.5px solid var(--accent-dim);
+    transform: rotate(45deg);
+  }
+  /* 形象靠右时气泡向左展开, 避免溢出窗口 */
+  #cm-mascot.flip #cm-bubble { left: auto; right: 60%; }
+  #cm-mascot.flip #cm-bubble::after { left: auto; right: 18px; transform: rotate(-135deg); }
+
+  /* 像素形象动画 */
+  .mascot .armL, .mascot .armR, .mascot .legL, .mascot .legR { transition: transform .15s; }
+  .mascot[data-anim="idle"] .body { animation: bob 2.6s ease-in-out infinite; }
+  @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-1px); } }
+  .mascot[data-anim="dance"] .armL { animation: wvL .38s ease-in-out infinite alternate; transform-origin: 6px 8px; }
+  .mascot[data-anim="dance"] .armR { animation: wvR .38s ease-in-out infinite alternate; transform-origin: 14px 8px; }
+  .mascot[data-anim="dance"] .legL { animation: stL .38s ease-in-out infinite alternate; transform-origin: 8px 12px; }
+  .mascot[data-anim="dance"] .legR { animation: stR .38s ease-in-out infinite alternate; transform-origin: 12px 12px; }
+  .mascot[data-anim="dance"] .body { animation: hop .38s ease-in-out infinite alternate; }
+  .mascot[data-anim="walk"] .legL { animation: stL .3s ease-in-out infinite alternate; transform-origin: 8px 12px; }
+  .mascot[data-anim="walk"] .legR { animation: stR .3s ease-in-out infinite alternate; transform-origin: 12px 12px; }
+  .mascot[data-anim="walk"] .armL { animation: wvL .6s ease-in-out infinite alternate; transform-origin: 6px 8px; }
+  .mascot[data-anim="walk"] .armR { animation: wvR .6s ease-in-out infinite alternate; transform-origin: 14px 8px; }
+  @keyframes wvL { from { transform: rotate(0); } to { transform: rotate(-40deg); } }
+  @keyframes wvR { from { transform: rotate(0); } to { transform: rotate(40deg); } }
+  @keyframes stL { from { transform: translateY(0); } to { transform: translateY(-1.2px) rotate(-16deg); } }
+  @keyframes stR { from { transform: translateY(-1.2px) rotate(16deg); } to { transform: translateY(0); } }
+  @keyframes hop { from { transform: translateY(0); } to { transform: translateY(-1.6px); } }
+  .mascot[data-anim="sleep"] .eye { transform: scaleY(.12); }
+  .mascot[data-anim="sleep"] .body { animation: bob 4s ease-in-out infinite; }
+  .zzz { position: absolute; top: -8px; right: -12px; color: var(--k3); font-size: 11px; opacity: 0; }
+  .mascot[data-anim="sleep"] .zzz { opacity: 1; animation: zf 2s ease-in-out infinite; }
+  @keyframes zf { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-10px); opacity: 0; } }
+  .ui-hl { outline: 1px solid var(--accent) !important; outline-offset: 3px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div class="term">
+  <div class="titlebar">
+    <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+    <span class="t">你 — claudemusic — 120×40</span>
+  </div>
+
+  <div class="term-body">
+    <div class="welcome">
+      <span class="mini-mascot">
+        <svg viewBox="0 0 20 16" width="52" height="42" shape-rendering="crispEdges">
+          <g fill="#D97757"><rect x="3" y="2" width="14" height="10"/><rect x="2" y="3" width="16" height="8"/><rect x="4" y="1" width="12" height="12"/></g>
+          <g fill="#B85C3D"><rect x="3" y="10" width="14" height="2"/></g>
+          <g fill="#2A1710"><rect x="6.5" y="5" width="2" height="2.4"/><rect x="11.5" y="5" width="2" height="2.4"/></g>
+          <g fill="#C4633F"><rect x="0.5" y="6" width="2.5" height="2.4"/><rect x="17" y="6" width="2.5" height="2.4"/></g>
+          <g fill="#B85C3D"><rect x="6" y="12" width="2.4" height="2.6"/><rect x="11.6" y="12" width="2.4" height="2.6"/></g>
+        </svg>
+      </span>
+      <div>
+        <h1>ClaudeMusic</h1>
+        <div class="meta">私人版 · 非商用 · 情绪引擎已就绪</div>
+        <div class="path">~/音乐</div>
+      </div>
+      <div class="right">
+        情绪: <b id="mood-name">待机</b> <span id="mood-src"></span><br>
+        音源: <b>网易云 / QQ / Radio</b><br>
+        <span id="clock">--:--:--</span>
+      </div>
+    </div>
+
+    <div class="out" id="out">
+      <div class="ln dim">ClaudeMusic v0.4.3 — play 关键词 / radio 名称 / demo / mood / diag / help</div>
+    </div>
+
+    <div class="viz-strip">
+      <div class="eq" id="eq"></div>
+      <div id="subtitle-layer">
+        <div id="subtitle-text"><span style="color:var(--faint);font-size:13px">♪ 字幕待机中</span></div>
+        <div id="subtitle-src"></div>
+      </div>
+    </div>
+
+    <div class="player">
+      <div class="prow" id="progress-widget">
+        <button class="btn" id="btn-rw" title="快退10秒">◂◂</button>
+        <button class="btn" id="btn-prev" title="上一首">|◀</button>
+        <button class="btn main" id="btn-play" title="播放/暂停">▶</button>
+        <button class="btn" id="btn-next" title="下一首">▶|</button>
+        <button class="btn" id="btn-ff" title="快进10秒">▸▸</button>
+        <span class="np" id="np-line">未在播放</span>
+        <div class="pbar" id="progress-bar"><div class="tr"><div class="fl" id="p-fill"></div></div></div>
+        <span class="tm" id="time-cur">0:00 / 0:00</span>
+        <button class="btn" id="btn-speed" title="倍速(点击循环)" style="width:auto;padding:0 7px;font-size:10px">1.0x</button>
+        <div class="vol" id="vol-widget">
+          <span class="lb">VOL</span>
+          <div class="pbar" id="vol-bar"><div class="tr"><div class="fl" id="v-fill" style="width:80%"></div></div></div>
+          <span class="lb" id="vol-num">80</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cmdline">
+      <span class="p">&gt;</span>
+      <input id="cmd" type="text" autocomplete="off" spellcheck="false" aria-label="命令输入">
+      <span class="cursor" id="caret"></span>
+      <span id="cmirror"></span>
+    </div>
+
+    <div class="statusbar">
+      <span class="arrows">› ›</span>
+      <span>mood auto on (<b>m</b> 循环切换) · ←退5s →进5s 长按加速</span>
+      <span>play &lt;词&gt; · radio &lt;名&gt; · demo · diag</span>
+      <span class="right" id="mood-desc">歌内相对情绪驱动字幕与交互</span>
+    </div>
+  </div>
+</div>
+
+<!-- Claude 浮动形象层 -->
+<div id="cm-layer">
+  <div id="cm-mascot" class="mascot" data-anim="idle">
+    <span class="zzz">z Z</span>
+    <span id="cm-bubble"></span>
+    <svg viewBox="0 0 20 16" width="88" height="72" shape-rendering="crispEdges">
+      <g class="body">
+        <g fill="#D97757"><rect x="3" y="2" width="14" height="10"/><rect x="2" y="3" width="16" height="8"/><rect x="4" y="1" width="12" height="12"/></g>
+        <g fill="#B85C3D"><rect x="3" y="10" width="14" height="2"/><rect x="4" y="11" width="12" height="1"/></g>
+        <g class="eye" fill="#2A1710"><rect x="6.5" y="5" width="2" height="2.4"/><rect x="11.5" y="5" width="2" height="2.4"/></g>
+        <g class="armL" fill="#C4633F"><rect x="0.5" y="6" width="2.5" height="2.4"/></g>
+        <g class="armR" fill="#C4633F"><rect x="17" y="6" width="2.5" height="2.4"/></g>
+        <g class="legL" fill="#B85C3D"><rect x="6" y="12" width="2.4" height="2.6"/></g>
+        <g class="legR" fill="#B85C3D"><rect x="11.6" y="12" width="2.4" height="2.6"/></g>
+      </g>
+    </svg>
+  </div>
+</div>
+
+<audio id="audio"></audio>
+<script>
+/* ==================== Tauri 桥接层 ==================== */
+(function () {
+  const IS_TAURI = !!(window.__TAURI_INTERNALS__ || window.__TAURI__);
+  const REMOTE_RE = /music\.163\.com|126\.net|qq\.com/;
+  const origFetch = window.fetch.bind(window);
+  window.__CM_ORIG_FETCH__ = origFetch;
+  if (IS_TAURI) {
+    let proxyBase = null, probing = null;
+    function resolveProxy() {
+      if (proxyBase) return Promise.resolve(proxyBase);
+      if (!probing) {
+        const test = encodeURIComponent("https://music.163.com/api/search/get?s=a&type=1&limit=1");
+        probing = (async () => {
+          for (const base of ["https://proxy.localhost/?u=", "http://proxy.localhost/?u="]) {
+            try { const r = await origFetch(base + test); if (r) { proxyBase = base; return base; } }
+            catch (e) {}
+          }
+          proxyBase = "https://proxy.localhost/?u=";
+          return proxyBase;
+        })();
+      }
+      return probing;
+    }
+    window.fetch = async function (input, init) {
+      const u = typeof input === "string" ? input : input && input.url;
+      if (u && REMOTE_RE.test(u)) {
+        const base = await resolveProxy();
+        return origFetch(base + encodeURIComponent(u), init).catch(e => {
+          window.cmLog && window.cmLog("FETCH_ERR " + u.slice(0, 80) + " :: " + (e && e.message));
+          throw e;
+        });
+      }
+      return origFetch(input, init);
+    };
+    window.__CM_PROXY__ = async (u) => (await resolveProxy()) + encodeURIComponent(u);
+    window.__CM_PROXY_BASE__ = resolveProxy;
+    document.documentElement.dataset.env = "tauri";
+  } else {
+    document.documentElement.dataset.env = "browser";
+  }
+  window.__CM_IS_TAURI__ = IS_TAURI;
+  window.cmLog = function (m) {
+    try { if (IS_TAURI && window.__TAURI_INTERNALS__) window.__TAURI_INTERNALS__.invoke("app_log", { msg: String(m).slice(0, 600) }); } catch (e) {}
+  };
+  if (IS_TAURI) {
+    setTimeout(async () => {
+      window.cmLog("=== 启动自检 ===");
+      try {
+        const r = await fetch("https://music.163.com/api/search/get?s=test&type=1&limit=1");
+        const j = await r.json().catch(() => ({}));
+        window.cmLog("自检-搜索: HTTP " + r.status + " result=" + (j.result ? "yes" : "no"));
+      } catch (e) { window.cmLog("自检-搜索: EXC " + (e && e.message)); }
+      try {
+        const r2 = await fetch("https://p2.music.126.net/6y-UleORITEDbvrOLV0Q8A==/5639395138885805.jpg");
+        window.cmLog("自检-CDN: HTTP " + r2.status);
+      } catch (e) { window.cmLog("自检-CDN: EXC " + (e && e.message)); }
+    }, 1500);
+  }
+})();
+</script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const audio = $("audio");
+const state = { queue: [], cur: -1, seekable: false, vol: 0.8, playing: false };
+
+/* 音频事件黑匣子 */
+let analyserLogged = false;
+["play", "playing", "canplay", "loadeddata", "stalled", "waiting", "error", "pause", "ended"].forEach(ev =>
+  audio.addEventListener(ev, () => {
+    if (ev === "error") {
+      const err = audio.error;
+      window.cmLog && window.cmLog("AUDIO_ERROR code=" + (err && err.code) + " msg=" + (err && err.message) + " src=" + (audio.currentSrc || "").slice(0, 100));
+    } else {
+      window.cmLog && window.cmLog("AUDIO " + ev + " t=" + audio.currentTime.toFixed(1));
+      if (ev === "playing" && !analyserLogged) { analyserLogged = true; window.cmLog && window.cmLog("ANALYSER tainted=" + tainted + " (false=实时频谱可用)"); }
+    }
+  })
+);
+
+/* ==================== 终端输出 ==================== */
+const out = $("out");
+function echo(html, cls) {
+  const d = document.createElement("div");
+  d.className = "ln" + (cls ? " " + cls : "");
+  d.innerHTML = html;
+  out.appendChild(d);
+  out.scrollTop = out.scrollHeight;
+}
+function esc(s) { const d = document.createElement("div"); d.textContent = s || ""; return d.innerHTML; }
+function toastLike(msg, cls) { echo("<span class='p'>⏺</span> " + esc(msg), cls || "dim"); }
+
+/* ==================== Claude 浮动形象 ==================== */
+const cmMascot = $("cm-mascot"), cmBubble = $("cm-bubble");
+let bubbleTimer = null, lastSay = 0, lastWalk = 0;
+function cmSay(text, ms, force) {
+  const now = Date.now();
+  if (!force && now - lastSay < 2500) return;
+  lastSay = now;
+  cmBubble.textContent = text; cmBubble.classList.add("show");
+  clearTimeout(bubbleTimer);
+  bubbleTimer = setTimeout(() => cmBubble.classList.remove("show"), ms || 3400);
+}
+function cmWalkTo(el, sayText) {
+  const now = Date.now();
+  if (now - lastWalk < 1200) { if (sayText) cmSay(sayText); return; }
+  lastWalk = now;
+  const r = el.getBoundingClientRect();
+  const x = Math.max(8, Math.min(window.innerWidth - 96, r.left + r.width / 2 - 44));
+  const y = Math.max(8, Math.min(window.innerHeight - 150, r.top - 66));
+  const cur = parseFloat(cmMascot.style.left) || 0;
+  if (Math.abs(cur - x) > 60) cmMascot.dataset.anim = "walk";
+  cmMascot.style.left = x + "px";
+  cmMascot.style.top = y + "px";
+  cmMascot.classList.toggle("flip", x > window.innerWidth - 300);
+  el.classList.add("ui-hl");
+  setTimeout(() => el.classList.remove("ui-hl"), 2200);
+  setTimeout(() => { cmMascot.dataset.anim = state.playing ? MOODS[moodCur].anim : "idle"; }, 950);
+  if (sayText) cmSay(sayText);
+}
+function cmHome() {
+  cmMascot.style.left = (window.innerWidth - 118) + "px";
+  cmMascot.style.top = (window.innerHeight - 236) + "px";
+}
+window.addEventListener("resize", cmHome);
+cmMascot.addEventListener("click", () => {
+  const lines = ["在听在听~", "这首歌不错吧！", "换歌就喊我", "♪ ♫ ♬", "戳我干嘛，好好听歌"];
+  cmSay(lines[Math.floor(Math.random() * lines.length)], 3000, true);
+});
+cmHome();
+
+/* ==================== 情绪引擎(带3秒稳定窗口, 防抖动) ==================== */
+const MOODS = {
+  excited: { name: "欢快", anim: "dance" }, peak: { name: "高潮", anim: "dance" },
+  calm: { name: "平静", anim: "idle" }, melancholy: { name: "忧郁", anim: "sleep" },
+};
+let moodAuto = true, moodCur = "calm", analyser = null, audioCtx = null, tainted = false;
+let tdBuf, fqBuf, fluxHist = [], synthPhase = 0;
+let moodCand = null, moodCandSince = 0, lastMoodSay = 0;
+
+function initAnalyser() {
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = audioCtx.createMediaElementSource(audio);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 256;
+    src.connect(analyser); analyser.connect(audioCtx.destination);
+    tdBuf = new Uint8Array(analyser.fftSize);
+    fqBuf = new Uint8Array(analyser.frequencyBinCount);
+  } catch (e) { tainted = true; }
+}
+audio.addEventListener("play", () => { if (audioCtx && audioCtx.state === "suspended") audioCtx.resume(); });
+
+function setMood(key) {
+  if (!MOODS[key] || key === moodCur) return;
+  moodCur = key;
+  document.documentElement.dataset.mood = key;
+  $("mood-name").textContent = MOODS[key].name;
+  $("mood-desc").textContent = "当前情绪「" + MOODS[key].name + "」驱动字幕与交互";
+  if (state.playing) mascotSet(MOODS[key].anim);
+  const now = Date.now();
+  if (now - lastMoodSay > 8000) {
+    lastMoodSay = now;
+    const hello = { excited: "节奏起来了，跟你蹦一个", peak: "副歌来了！", calm: "嗯…慢慢听~", melancholy: "这首有点伤感，我陪你" };
+    cmSay(hello[key], 3200, true);
+  }
+}
+/* 歌内相对情绪: 能量按整首歌的 min/max 归一化, 而非绝对阈值 */
+let songStats = { min: Infinity, max: 0, sum: 0, n: 0 };
+function resetSongStats() { songStats = { min: Infinity, max: 0, sum: 0, n: 0 }; }
+function classify(rms, centroid, onsets) {
+  const st = songStats;
+  /* 去极值: 单帧能量超过当前均值4倍时按均值4倍截断, 防止尖峰污染统计 */
+  const mean = st.n > 0 ? st.sum / st.n : 0;
+  const clamped = (st.n > 20 && mean > 0 && rms > mean * 4) ? mean * 4 : rms;
+  st.min = Math.min(st.min, clamped); st.max = Math.max(st.max, clamped); st.sum += clamped; st.n++;
+  let key;
+  if (st.n < 40 || st.max < 0.05) {
+    key = "calm"; // 开头2秒热身: 统计不足时先判平静
+  } else {
+    const rel = (rms - st.min) / (st.max - st.min + 1e-6); // 0~1 歌内相对能量
+    const avg = st.sum / st.n;
+    if (rel > 0.82 && onsets > 3) key = "peak";
+    else if (rel > 0.55 || rms > avg * 1.35) key = "excited";
+    else if (rel < 0.25 && centroid < 0.2) key = "melancholy";
+    else key = "calm";
+  }
+  if (key === moodCur) { moodCand = null; return; }
+  if (!moodAuto) return;
+  if (key !== moodCand) { moodCand = key; moodCandSince = Date.now(); }
+  else if (Date.now() - moodCandSince > 3000) { setMood(key); moodCand = null; }
+}
+function drawEQ(fq) {
+  /* 对数分组: 低频细划分、高频粗划分, 呈现真实频谱能量分布 */
+  const n = eqEls.length;
+  for (let i = 0; i < n; i++) {
+    const lo = Math.floor(Math.pow(fq.length, i / n));
+    const hi = Math.max(lo + 1, Math.floor(Math.pow(fq.length, (i + 1) / n)));
+    let v = 0, c = 0;
+    for (let j = lo; j < hi && j < fq.length; j++) { v += fqBuf[j]; c++; }
+    eqEls[i].style.height = Math.max(6, (c ? v / c : 0) / 255 * 100) + "%";
+  }
+}
+/* rAF 循环仅在播放时运行, 暂停时不空转 */
+let rafActive = false;
+function moodLoop() {
+  if (!state.playing) { rafActive = false; return; }
+  if (state.playing && analyser && !tainted) {
+    analyser.getByteTimeDomainData(tdBuf);
+    analyser.getByteFrequencyData(fqBuf);
+    let sum = 0, allZero = true;
+    for (let i = 0; i < tdBuf.length; i++) { const v = (tdBuf[i] - 128) / 128; sum += v * v; if (tdBuf[i] !== 128 && tdBuf[i] !== 0) allZero = false; }
+    const rms = Math.sqrt(sum / tdBuf.length);
+    let wsum = 0, fsum = 0;
+    for (let i = 0; i < fqBuf.length; i++) { wsum += fqBuf[i] * i; fsum += fqBuf[i]; }
+    const centroid = fsum > 0 ? wsum / fsum / fqBuf.length : 0;
+    fluxHist.push(rms); if (fluxHist.length > 43) fluxHist.shift();
+    const onsets = fluxHist.filter((v, i, a) => i > 0 && v - a[i-1] > 0.02).length / (fluxHist.length / 20);
+    if (allZero && rms < 0.001) {
+      /* 连续约3秒全零才判污染(避免把启动瞬间的静音误判) */
+      zeroFrames++;
+      if (zeroFrames > 180) { tainted = true; zeroFrames = 0; $("mood-src").textContent = "(模拟)"; }
+    } else {
+      zeroFrames = 0;
+      classify(rms, centroid, onsets);
+      drawEQ(fqBuf);
+      if ($("mood-src").textContent !== "(实时频谱)") $("mood-src").textContent = "(实时频谱)";
+    }
+  }
+  if (state.playing && (tainted || !analyser)) {
+    synthPhase += 0.09;
+    const rms = 0.25 + 0.2 * Math.abs(Math.sin(synthPhase)) + 0.1 * Math.sin(synthPhase * 0.37);
+    const centroid = 0.3 + 0.15 * Math.sin(synthPhase * 0.23);
+    const onsets = 2 + 2 * Math.abs(Math.sin(synthPhase * 0.5));
+    $("mood-src").textContent = "(模拟)";
+    classify(rms, centroid, onsets);
+    for (let i = 0; i < eqEls.length; i++) eqEls[i].style.height = Math.max(6, (Math.abs(Math.sin(synthPhase + i * 0.4)) * 70 + 8)) + "%";
+    /* 恢复探测: 污染后每60帧嗅探一次, 出现真实数据即切回实时频谱 */
+    if (analyser && ++recoverProbe % 60 === 0) {
+      analyser.getByteTimeDomainData(tdBuf);
+      for (let i = 0; i < tdBuf.length; i++) {
+        if (tdBuf[i] !== 128 && tdBuf[i] !== 0) { tainted = false; zeroFrames = 0; break; }
+      }
+    }
+  }
+  requestAnimationFrame(moodLoop);
+}
+let zeroFrames = 0, recoverProbe = 0;
+function mascotSet(a) { cmMascot.dataset.anim = a; }
+const eqEls = [];
+for (let i = 0; i < 30; i++) { const b = document.createElement("i"); $("eq").appendChild(b); eqEls.push(b); }
+setInterval(() => { if (!state.playing) eqEls.forEach(b => b.style.height = "6%"); }, 300);
+initAnalyser();
+function startMoodLoop() {
+  if (!rafActive) { rafActive = true; requestAnimationFrame(moodLoop); }
+}
+
+/* ==================== 字幕引擎(独立层, 只在切歌时加载) ==================== */
+const DEMO_LYRICS = [
+  "落日 把云朵 烫成了 <b class='k1'>橘色</b>",
+  "你像 <b class='k1'>一阵风</b> 吹散了 <b class='k2'>烦恼</b>",
+  "心跳的节拍 是 我的 <b class='k2'>鼓点</b>",
+  "把 世界 调成 <b class='k1'>亮色</b>",
+  "晚风 轻轻 哼着 <b class='k3'>歌</b>",
+  "星星 排好队 为你 <b class='k2'>闪烁</b>",
+];
+let lyricMode = true, lrcLines = [], lrcShown = -1, lyricIdx = 0, lyricTimer = null;
+
+async function fetchLrc(id) {
+  try {
+    const r = await fetch("https://music.163.com/api/song/lyric?id=" + id + "&lv=1&kv=1&tv=-1", { signal: AbortSignal.timeout(6000) });
+    const d = await r.json();
+    return d.lrc && d.lrc.lyric ? d.lrc.lyric : null;
+  } catch (e) { return null; }
+}
+function parseLrc(text) {
+  const arr = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s*\[(\d{1,2}):(\d{1,2}(?:\.\d{1,3})?)\](.*)$/);
+    if (m && m[3].replace(/<[^>]*>/g, "").trim()) {
+      arr.push({ t: (+m[1]) * 60 + parseFloat(m[2]), text: m[3].replace(/<[^>]*>/g, "").trim() });
+    }
+  }
+  return arr.sort((a, b) => a.t - b.t);
+}
+/* 情绪词染色: 只给"情绪明显的词"上色, 其余保持素色 */
+const LEXICON = ["恋爱","爱人","心动","心跳","心事","思念","想念","怀念","温柔","孤独","寂寞","拥抱","亲吻","离别","重逢","遇见","相遇","阳光","月光","星空","星星","夜晚","夜色","黄昏","黎明","晚风","风雨","雨滴","花开","花落","大海","海浪","天空","晴天","回忆","记忆","时光","岁月","青春","远方","旅途","流浪","自由","勇敢","微笑","哭泣","温暖","燃烧","奔跑","寻找","等待","希望","失望","幸福","快乐","悲伤","欢喜","眼泪","泪光","梦想","痴心","孤单","爱","心","梦","泪","风","雨","花","海","笑","哭","醉","醒","光","暗"];
+const LEX_RE = new RegExp("(" + LEXICON.slice().sort((a, b) => b.length - a.length).join("|") + ")", "g");
+function colorize(text) {
+  let ci = 0;
+  return esc(text).replace(LEX_RE, (m) => "<b class='" + ["k1", "k2", "k3"][ci++ % 3] + "'>" + m + "</b>");
+}
+function renderSubtitle(html, srcLabel) {
+  $("subtitle-text").innerHTML = html;
+  $("subtitle-src").textContent = srcLabel || "";
+}
+function nextDemoLyric() {
+  renderSubtitle(DEMO_LYRICS[lyricIdx % DEMO_LYRICS.length], "演示字幕");
+  lyricIdx++;
+}
+async function loadLyrics(track) {
+  stopLyrics();
+  lrcLines = []; lrcPtr = 0;
+  if (track && track.id && lyricMode) {
+    const lrc = await fetchLrc(track.id);
+    if (lrc) lrcLines = parseLrc(lrc);
+    window.cmLog && window.cmLog("LRC id=" + track.id + " lines=" + lrcLines.length);
+  }
+  if (lrcLines.length) {
+    lrcShown = -1;
+    renderSubtitle(colorize(lrcLines[0].text), "网易云歌词 · " + lrcLines.length + " 行");
+  } else {
+    nextDemoLyric();
+    lyricTimer = setInterval(() => { if (state.playing) nextDemoLyric(); }, 4200);
+  }
+}
+function stopLyrics() { clearInterval(lyricTimer); lyricTimer = null; }
+function syncLrc() {
+  if (!lrcLines.length || !state.seekable || !state.playing) return;
+  const t = audio.currentTime + 0.25;
+  /* 二分查找当前行: 支持往回 seek 后立即同步 */
+  let lo = 0, hi = lrcLines.length - 1, idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (lrcLines[mid].t <= t) { idx = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  if (idx < 0) idx = 0;
+  if (idx !== lrcShown) {
+    lrcShown = idx;
+    renderSubtitle(colorize(lrcLines[idx].text), "网易云歌词 · " + lrcLines.length + " 行");
+  }
+}
+
+/* ==================== 播放核心 ==================== */
+function fmt(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s/60) + ":" + String(s%60).padStart(2,"0"); }
+function setPlayingUI(on) {
+  state.playing = on;
+  $("btn-play").textContent = on ? "❚❚" : "▶";
+  mascotSet(on ? MOODS[moodCur].anim : "idle");
+}
+function loadTrack(i) {
+  if (!state.queue.length) return;
+  /* 跳过无音源曲目(QQ未登录等), 最多绕队列一圈 */
+  let tries = 0;
+  const hasUrl = (t) => !!(t.outer || t.url || t.url_resolved);
+  while (tries < state.queue.length && !hasUrl(state.queue[(i + tries) % state.queue.length])) tries++;
+  if (tries >= state.queue.length) {
+    echo("<span class='p'>⏺</span> 队列中没有可播放的曲目（未登录平台仅有元数据）", "err");
+    cmSay("没有能播的曲目，先换个搜索词或等登录功能", 3200, true);
+    return;
+  }
+  if (tries > 0) echo("<span class='p'>⏺</span> 已跳过 " + tries + " 首不可播放曲目", "dim");
+  state.cur = (i + tries) % state.queue.length;
+  const t = state.queue[state.cur];
+  state.seekable = !!t.outer;
+  const rawUrl = t.outer || t.url || t.url_resolved;
+  resetSongStats(); fluxHist = [];
+  window.cmLog && window.cmLog("LOAD name=" + t.name + " src=" + String(rawUrl).slice(0, 100));
+  if (window.__CM_IS_TAURI__ && /music\.163\.com|126\.net/.test(rawUrl)) {
+    window.__CM_PROXY__(rawUrl).then(u => {
+      audio.crossOrigin = "anonymous";
+      audio.src = u;
+    }).catch(() => { audio.crossOrigin = null; audio.src = rawUrl; });
+  } else {
+    audio.crossOrigin = null;
+    audio.src = rawUrl;
+  }
+  audio.volume = state.vol;
+  audio.play().catch(() => {});
+  document.querySelectorAll(".row").forEach(el => el.classList.remove("on"));
+  const rows = document.querySelectorAll("#out .row");
+  if (rows[state.cur]) { rows[state.cur].classList.add("on"); rows[state.cur].scrollIntoView({ block: "nearest" }); }
+  $("np-line").innerHTML = "<b>" + esc(t.name) + "</b> — " + esc(t.artist || t.country || "");
+  echo("<span class='p'>▶</span> 正在播放: <b>" + esc(t.name) + "</b> — " + esc(t.artist || t.country || ""), "");
+  loadLyrics(t);
+  cmWalkTo($("np-line"));
+  cmSay("正在播放: " + t.name, 3000, true);
+}
+audio.addEventListener("playing", () => { failStreak = 0; setPlayingUI(true); startMoodLoop(); });
+audio.addEventListener("pause", () => { if (!audio.ended) { state.playing = false; $("btn-play").textContent = "▶"; mascotSet("idle"); } });
+audio.addEventListener("ended", () => { if (state.queue.length) loadTrack(state.cur + 1); });
+let failStreak = 0;
+audio.addEventListener("error", () => {
+  if (!audio.src) return;
+  failStreak++;
+  echo("<span class='p'>⏺</span> 该曲目可能需要登录/会员权限（VIP曲目登录后解锁）", "err");
+  cmSay("这首要会员…先听下一首吧", 3200, true);
+  if (failStreak >= Math.min(5, state.queue.length)) {
+    echo("<span class='p'>⏺</span> 连续 " + failStreak + " 首播放失败，已停止自动连播（换歌或 diag 自检）", "err");
+    cmSay("连续失败，先停下来了", 3200, true);
+    failStreak = 0;
+    return;
+  }
+  setTimeout(() => { if (state.queue.length > 1) loadTrack(state.cur + 1); }, 1800);
+});
+audio.addEventListener("timeupdate", () => {
+  if (!state.seekable || !audio.duration) return;
+  $("p-fill").style.width = (audio.currentTime / audio.duration * 100) + "%";
+  $("time-cur").textContent = fmt(audio.currentTime) + " / " + fmt(audio.duration);
+  syncLrc();
+});
+
+/* ==================== 搜索(三级模糊) ==================== */
+const DEMO_TRACKS = [
+  { id: 400876427, name: "Try", artist: "周杰伦", album: "功夫熊猫3 主题曲", src: "netease", outer: "https://music.163.com/song/media/outer/url?id=400876427.mp3" },
+  { id: 288750, name: "山歌好比春江水.多谢了 (Live)", artist: "李健", album: "歌手", src: "netease", outer: "https://music.163.com/song/media/outer/url?id=288750.mp3" },
+  { id: 288820, name: "结尾曲 - 友谊地久天长 (Live)", artist: "群星", album: "歌手", src: "netease", outer: "https://music.163.com/song/media/outer/url?id=288820.mp3" },
+];
+async function neteaseSearch(q) {
+  try {
+    const r = await fetch("https://music.163.com/api/search/get?s=" + encodeURIComponent(q) + "&type=1&limit=25", { signal: AbortSignal.timeout(6000) });
+    const d = await r.json();
+    let songs = ((d.result && d.result.songs) || []).map(s => ({
+      id: s.id, name: s.name, src: "netease",
+      artist: (s.artists || []).map(a => a.name).join("/"),
+      album: s.album ? s.album.name : "",
+      outer: "https://music.163.com/song/media/outer/url?id=" + s.id + ".mp3",
+    }));
+    if (!songs.length) {
+      const r2 = await fetch("https://music.163.com/api/search/suggest/web?s=" + encodeURIComponent(q), { signal: AbortSignal.timeout(6000) });
+      const d2 = await r2.json();
+      songs = ((d2.result && d2.result.songs) || []).map(s => ({
+        id: s.id, name: s.name, src: "netease",
+        artist: (s.artists || []).map(a => a.name).join("/"),
+        album: s.album ? s.album.name : "",
+        outer: "https://music.163.com/song/media/outer/url?id=" + s.id + ".mp3",
+      }));
+      if (songs.length) toastLike("精确匹配为空，已用模糊匹配 " + songs.length + " 首", "dim");
+    }
+    return songs;
+  } catch (e) { return null; }
+}
+async function qqSearch(q) {
+  try {
+    const r = await fetch("https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w=" + encodeURIComponent(q) + "&format=json&n=15", { signal: AbortSignal.timeout(6000) });
+    const d = await r.json();
+    return (((d.data || {}).song || {}).list || []).map(s => ({
+      name: s.songname, src: "qq",
+      artist: (s.singer || []).map(a => a.name).join("/"),
+      album: s.albumname || "",
+      vip: (s.pay || {}).payplay !== 0,
+    }));
+  } catch (e) { return []; }
+}
+function fuzzyScore(needle, hay) {
+  const n = needle.toLowerCase().replace(/\s+/g, ""), h = hay.toLowerCase();
+  if (!n) return 0;
+  if (h.includes(n)) return 100 + (h.startsWith(n) ? 20 : 0) - Math.min(30, h.indexOf(n));
+  let i = 0;
+  for (const ch of h) { if (ch === n[i]) i++; if (i >= n.length) break; }
+  return i >= n.length ? 40 - (h.length - n.length) * 0.1 : -1;
+}
+function rankByRelevance(q, list) {
+  return list
+    .map(s => ({ s, v: Math.max(fuzzyScore(q, s.name + " " + s.artist), fuzzyScore(q, s.artist + " " + s.name)) }))
+    .filter(x => x.v >= 0)
+    .sort((a, b) => b.v - a.v)
+    .map(x => x.s);
+}
+function renderRows(list, isRadio) {
+  document.querySelectorAll("#out .row").forEach(el => el.remove());
+  list.forEach((t, i) => {
+    const tag = isRadio ? "● LIVE" : (t.src === "qq" ? "QQ·需登录" : "网易 MP3");
+    const d = document.createElement("div");
+    d.className = "row"; d.dataset.i = i;
+    d.innerHTML = '<span class="idx">' + String(i+1).padStart(2,"0") + '</span><span class="nm">' + esc(t.name) + '</span><span class="ar">' + esc(t.artist || "") + '</span><span class="tg' + (isRadio ? " live" : "") + '">' + tag + '</span>';
+    d.addEventListener("click", () => {
+      if (t.src === "qq") { echo("<span class='p'>⏺</span> QQ 音乐播放需先登录（登录功能开发中）", "err"); cmSay("QQ的要登录才行，先听网易云版本？", 3200, true); return; }
+      loadTrack(i);
+    });
+    out.appendChild(d);
+  });
+  out.scrollTop = out.scrollHeight;
+}
+async function doPlay(q) {
+  toastLike("模糊搜索「" + q + "」…");
+  let songs = await neteaseSearch(q);
+  if (songs === null) echo("<span class='p'>⏺</span> 网易云搜索通道异常（可输入 diag 自检）", "err");
+  if (songs && songs.length) songs = rankByRelevance(q, songs);
+  if (songs && songs.length) {
+    const qq = await qqSearch(q);
+    const merged = songs.concat(rankByRelevance(q, qq).slice(0, 8));
+    state.queue = merged; renderRows(merged, false); loadTrack(0);
+    return;
+  }
+  const radios = await radioSearch(q);
+  if (radios.length) {
+    toastLike(songs === null ? "搜索通道受限，切电台模式" : "没找到歌曲，为你找到相关电台", "dim");
+    state.queue = radios; renderRows(radios, true); loadTrack(0);
+  } else { echo("<span class='p'>⏺</span> 没找到「" + esc(q) + "」", "err"); cmSay("没找到「" + q + "」，换个关键词？", 3200, true); }
+}
+async function doRadio(q) {
+  toastLike("搜索电台「" + q + "」…");
+  const radios = await radioSearch(q);
+  if (!radios.length) { echo("<span class='p'>⏺</span> 没找到相关电台", "err"); return; }
+  toastLike("Radio Browser → " + radios.length + " 个电台", "ok");
+  state.queue = radios; renderRows(radios, true); loadTrack(0);
+}
+async function radioSearch(q) {
+  try {
+    const r = await fetch("https://de1.api.radio-browser.info/json/stations/search?name=" + encodeURIComponent(q) + "&limit=15&hidebroken=true&order=votes&reverse=true", { signal: AbortSignal.timeout(6000) });
+    return (await r.json()).map(s => ({
+      name: s.name.trim(), src: "radio", artist: s.country + " · " + (s.tags || "").split(",").slice(0,2).join("/"),
+      url: s.url_resolved || s.url, country: s.country,
+    }));
+  } catch (e) { return []; }
+}
+async function doDiag() {
+  echo("<span class='p'>diag</span> 运行环境: " + (window.__CM_IS_TAURI__ ? "Tauri 桌面版" : "浏览器预览"));
+  if (window.__CM_PROXY_BASE__) {
+    try { echo("代理通道: " + (await window.__CM_PROXY_BASE__()).slice(0, 30) + "…"); }
+    catch (e) { echo("代理通道: 解析失败", "err"); }
+  } else echo("代理通道: 无(浏览器直连)");
+  try {
+    const r = await fetch("https://music.163.com/api/search/get?s=test&type=1&limit=1");
+    const j = await r.json().catch(() => ({}));
+    echo("网易云搜索: HTTP " + r.status + (j.result ? " 正常" : " 异常 " + esc(JSON.stringify(j).slice(0, 80))), j.result ? "ok" : "err");
+  } catch (e) { echo("网易云搜索: 网络层失败 " + esc(String(e && e.message || e)), "err"); }
+  try {
+    const r2 = await fetch("https://p2.music.126.net/6y-UleORITEDbvrOLV0Q8A==/5639395138885805.jpg");
+    echo("音频CDN: HTTP " + r2.status + " " + esc(r2.headers.get("content-type") || ""), r2.ok ? "ok" : "err");
+  } catch (e) { echo("音频CDN: 网络层失败 " + esc(String(e && e.message || e)), "err"); }
+  try {
+    const r3 = await fetch("https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w=test&format=json&n=1");
+    const j3 = await r3.json().catch(() => ({}));
+    echo("QQ搜索: HTTP " + r3.status + (j3.code === 0 ? " 正常" : " 异常"), j3.code === 0 ? "ok" : "err");
+  } catch (e) { echo("QQ搜索: 网络层失败 " + esc(String(e && e.message || e)), "err"); }
+}
+
+/* ==================== 进度/音量 ==================== */
+function bindBar(barEl, cb) {
+  const apply = (e) => { const r = barEl.getBoundingClientRect(); cb(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width))); };
+  barEl.addEventListener("mousedown", (e) => {
+    apply(e);
+    const mv = (ev) => apply(ev);
+    const up = () => { document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up); };
+    document.addEventListener("mousemove", mv); document.addEventListener("mouseup", up);
+  });
+}
+bindBar($("progress-bar"), (p) => {
+  if (state.seekable && audio.duration) audio.currentTime = p * audio.duration;
+  cmWalkTo($("progress-widget"), "拖到 " + fmt(p * (audio.duration || 0)));
+});
+function setVol(v) {
+  state.vol = Math.max(0, Math.min(1, v));
+  audio.volume = state.vol;
+  $("v-fill").style.width = state.vol * 100 + "%"; $("vol-num").textContent = Math.round(state.vol * 100);
+}
+bindBar($("vol-bar"), (p) => { setVol(p); cmWalkTo($("vol-widget"), "音量 " + Math.round(p*100) + "%"); });
+
+$("btn-play").addEventListener("click", () => {
+  if (!audio.src) { execCmd("demo"); return; }
+  if (audio.paused) { audio.play().catch(()=>{}); } else audio.pause();
+});
+$("btn-next").addEventListener("click", () => { if (state.queue.length) { loadTrack(state.cur + 1); cmWalkTo($("btn-next")); } });
+$("btn-prev").addEventListener("click", () => { if (state.queue.length) { loadTrack(state.cur - 1); cmWalkTo($("btn-prev")); } });
+
+/* 快进/快退/倍速 */
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+const SPEED_LABELS = ["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"];
+let speedIdx = 2;
+function setSpeed(idx) {
+  speedIdx = ((idx % SPEEDS.length) + SPEEDS.length) % SPEEDS.length;
+  audio.playbackRate = SPEEDS[speedIdx];
+  $("btn-speed").textContent = SPEED_LABELS[speedIdx];
+}
+$("btn-rw").addEventListener("click", () => {
+  if (state.seekable && audio.duration) {
+    audio.currentTime = Math.max(0, audio.currentTime - 10);
+    cmWalkTo($("progress-widget"), "快退 10 秒");
+  }
+});
+$("btn-ff").addEventListener("click", () => {
+  if (state.seekable && audio.duration) {
+    audio.currentTime = Math.min(audio.duration, audio.currentTime + 10);
+    cmWalkTo($("progress-widget"), "快进 10 秒");
+  }
+});
+$("btn-speed").addEventListener("click", () => {
+  setSpeed(speedIdx + 1);
+  cmWalkTo($("btn-speed"), "倍速 " + SPEED_LABELS[speedIdx]);
+});
+
+/* ==================== 命令 ==================== */
+function execCmd(raw) {
+  const s = raw.trim(); if (!s) return;
+  echo("<span class='p'>&gt;</span> " + esc(s));
+  const [cmd, ...rest] = s.split(/\s+/); const arg = rest.join(" ");
+  switch (cmd.toLowerCase()) {
+    case "play": arg ? doPlay(arg) : toastLike("用法: play <关键词>", "dim"); break;
+    case "radio": doRadio(arg || "华语"); break;
+    case "next": $("btn-next").click(); break;
+    case "prev": $("btn-prev").click(); break;
+    case "pause": audio.pause(); break;
+    case "resume": audio.play().catch(()=>{}); break;
+    case "vol": { const v = parseFloat(arg); if (!isNaN(v)) { setVol(v/100); cmWalkTo($("vol-widget"), "音量 " + Math.round(Math.min(100,Math.max(0,v))) + "%"); } break; }
+    case "mood": {
+      const map = { "欢快": "excited", "excited": "excited", "平静": "calm", "calm": "calm", "忧郁": "melancholy", "sad": "melancholy", "高潮": "peak", "peak": "peak" };
+      if (arg === "auto" || !arg) { moodAuto = true; $("mood-src").textContent = "(auto)"; cmSay("情绪自动识别已开启", 3000, true); }
+      else if (map[arg]) { moodAuto = false; setMood(map[arg]); }
+      else cmSay("用法: mood auto|欢快|平静|忧郁|高潮", 3200, true);
+      break;
+    }
+    case "lyric":
+      lyricMode = !(arg === "off");
+      $("subtitle-layer").style.display = lyricMode ? "" : "none";
+      if (!lyricMode) stopLyrics();
+      else if (state.queue[state.cur]) loadLyrics(state.queue[state.cur]);
+      cmSay("字幕已" + (lyricMode ? "开启" : "关闭"), 2600, true);
+      break;
+    case "ff": {
+      const n = parseFloat(arg) || 10;
+      if (state.seekable && audio.duration) { audio.currentTime = Math.min(audio.duration, audio.currentTime + n); cmWalkTo($("progress-widget"), "快进 " + n + " 秒"); }
+      break;
+    }
+    case "rw": {
+      const n2 = parseFloat(arg) || 10;
+      if (state.seekable && audio.duration) { audio.currentTime = Math.max(0, audio.currentTime - n2); cmWalkTo($("progress-widget"), "快退 " + n2 + " 秒"); }
+      break;
+    }
+    case "speed": {
+      if (arg) {
+        const v = parseFloat(arg);
+        const i = SPEEDS.findIndex(s => Math.abs(s - v) < 0.01);
+        if (i >= 0) setSpeed(i); else { cmSay("可用倍速: " + SPEED_LABELS.join(" / "), 3200, true); break; }
+      } else setSpeed(speedIdx + 1);
+      cmWalkTo($("btn-speed"), "倍速 " + SPEED_LABELS[speedIdx]);
+      break;
+    }
+    case "demo": state.queue = DEMO_TRACKS.slice(); renderRows(DEMO_TRACKS, false); loadTrack(0); break;
+    case "diag": doDiag(); break;
+    case "help":
+      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · mood auto|欢快|平静|忧郁|高潮 · lyric on|off · demo · diag · clear", "dim"); break;
+    case "clear":
+      document.querySelectorAll("#out > .ln, #out > .row").forEach(el => el.remove());
+      break;
+    default: doPlay(s);
+  }
+}
+$("cmd").addEventListener("keydown", (e) => { if (e.key === "Enter") { execCmd(e.target.value); e.target.value = ""; } });
+
+/* 光标竖线: 跟随文字 + 失焦隐藏 */
+const cmdEl = $("cmd"), caretEl = $("caret"), mirrorEl = $("cmirror");
+function moveCaret() {
+  const pos = cmdEl.selectionStart ?? cmdEl.value.length;
+  mirrorEl.textContent = cmdEl.value.slice(0, pos);
+  const maxLeft = cmdEl.offsetLeft + cmdEl.clientWidth - 12;
+  caretEl.style.left = Math.min(cmdEl.offsetLeft + mirrorEl.offsetWidth + 1, maxLeft) + "px";
+}
+["input", "keyup", "click"].forEach(ev => cmdEl.addEventListener(ev, moveCaret));
+window.addEventListener("resize", () => { moveCaret(); cmHome(); });
+cmdEl.addEventListener("focus", () => { caretEl.classList.add("on"); moveCaret(); });
+cmdEl.addEventListener("blur", () => caretEl.classList.remove("on"));
+
+/* 闲聊: 低频随机气泡(55秒窗口仅25%概率) */
+setInterval(() => {
+  if (state.playing && Math.random() < 0.25) {
+    const idle = ["♪ 这段旋律不错", "跟着节奏摇~", "试试按 m 换情绪", "音量交给你了"];
+    cmSay(idle[Math.floor(Math.random() * idle.length)], 3000);
+  }
+}, 55000);
+
+/* 方向键: 单击=±5s(松开才执行); 长按右=2倍速, 长按左=持续快退(不再先跳5秒) */
+let holdTimer = null, holding = false, savedRate = 1, holdDir = 0, holdInterval = null, pendingTap = null;
+document.addEventListener("keydown", (e) => {
+  if (document.activeElement === cmdEl || !state.seekable) return;
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  e.preventDefault();
+  if (holding || pendingTap) return;
+  if (!e.repeat) {
+    pendingTap = { dir: e.key === "ArrowRight" ? 1 : -1 };
+    holdTimer = setTimeout(() => { startHold(pendingTap.dir); pendingTap = null; }, 350);
+  }
+});
+function startHold(dir) {
+  holding = true;
+  holdDir = dir;
+  cmWalkTo($("progress-widget"));
+  if (dir > 0) {
+    savedRate = audio.playbackRate;
+    audio.playbackRate = 2;
+    cmSay("2倍速快进中…", 1800, true);
+  } else {
+    cmSay("持续快退中…松开停止", 1800, true);
+    holdInterval = setInterval(() => { audio.currentTime = Math.max(0, audio.currentTime - 0.4); }, 100);
+  }
+  mascotSet("walk");
+}
+document.addEventListener("keyup", (e) => {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  clearTimeout(holdTimer);
+  if (holding) {
+    holding = false;
+    if (holdDir > 0) audio.playbackRate = savedRate;
+    else { clearInterval(holdInterval); holdInterval = null; }
+    mascotSet(state.playing ? MOODS[moodCur].anim : "idle");
+    cmSay("回到 " + SPEED_LABELS[speedIdx] + " 正常播放", 2000);
+  } else if (pendingTap) {
+    const d = pendingTap.dir * 5;
+    pendingTap = null;
+    audio.currentTime = Math.max(0, Math.min(audio.duration || 0, audio.currentTime + d));
+    cmWalkTo($("progress-widget"), (d > 0 ? "快进 " : "快退 ") + 5 + " 秒");
+  }
+});
+
+setTimeout(() => cmSay("嗨！我是 Claude，放首歌我陪你听", 3600, true), 900);
+window.ClaudeTools = {
+  mood: { get: () => ({ mood: moodCur, auto: moodAuto }), set: (k) => execCmd("mood " + k), auto: (v) => { moodAuto = !!v; } },
+  lyric: { fetchLrc, parseLrc, colorize, toggle: (v) => execCmd("lyric " + (v ? "on" : "off")) },
+  env: () => ({ tauri: window.__CM_IS_TAURI__ }),
+};
+</script>
+</body>
+</html>

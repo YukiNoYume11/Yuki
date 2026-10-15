@@ -6,3 +6,4 @@ dist/
 .toolchain-tmp/
 toolchain/
 logs/
+wvdata-test/
