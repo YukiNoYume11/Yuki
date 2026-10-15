@@ -82,13 +82,10 @@ fn handle_proxy(target: String, range: Option<String>) -> Response<Vec<u8>> {
                 .get("content-range")
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
-            let content_length = resp
-                .headers()
-                .get("content-length")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string());
             let mut buf = Vec::with_capacity(1 << 20);
             let _ = resp.take(MAX_BODY).read_to_end(&mut buf);
+            // 注意: 不转发上游 Content-Length —— take(MAX_BODY) 截断后会与实际字节不符,
+            // Tauri 会按 buf 实际长度自动设置
             let mut b = Response::builder()
                 .status(status)
                 .header("Access-Control-Allow-Origin", "*")
@@ -96,9 +93,6 @@ fn handle_proxy(target: String, range: Option<String>) -> Response<Vec<u8>> {
                 .header("Accept-Ranges", "bytes");
             if let Some(cr) = content_range {
                 b = b.header("Content-Range", cr);
-            }
-            if let Some(cl) = content_length {
-                b = b.header("Content-Length", cl);
             }
             b.body(buf).unwrap()
         }

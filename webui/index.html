@@ -511,8 +511,12 @@ function moodLoop() {
     const centroid = fsum > 0 ? wsum / fsum / fqBuf.length : 0;
     fluxHist.push(rms); if (fluxHist.length > 43) fluxHist.shift();
     const onsets = fluxHist.filter((v, i, a) => i > 0 && v - a[i-1] > 0.02).length / (fluxHist.length / 20);
-    if (allZero && rms < 0.001) tainted = true;
-    else {
+    if (allZero && rms < 0.001) {
+      /* 连续约3秒全零才判污染(避免把启动瞬间的静音误判) */
+      zeroFrames++;
+      if (zeroFrames > 180) { tainted = true; zeroFrames = 0; $("mood-src").textContent = "(模拟)"; }
+    } else {
+      zeroFrames = 0;
       classify(rms, centroid, onsets);
       drawEQ(fqBuf);
       if ($("mood-src").textContent !== "(实时频谱)") $("mood-src").textContent = "(实时频谱)";
@@ -526,9 +530,17 @@ function moodLoop() {
     $("mood-src").textContent = "(模拟)";
     classify(rms, centroid, onsets);
     for (let i = 0; i < eqEls.length; i++) eqEls[i].style.height = Math.max(6, (Math.abs(Math.sin(synthPhase + i * 0.4)) * 70 + 8)) + "%";
+    /* 恢复探测: 污染后每60帧嗅探一次, 出现真实数据即切回实时频谱 */
+    if (analyser && ++recoverProbe % 60 === 0) {
+      analyser.getByteTimeDomainData(tdBuf);
+      for (let i = 0; i < tdBuf.length; i++) {
+        if (tdBuf[i] !== 128 && tdBuf[i] !== 0) { tainted = false; zeroFrames = 0; break; }
+      }
+    }
   }
   requestAnimationFrame(moodLoop);
 }
+let zeroFrames = 0, recoverProbe = 0;
 function mascotSet(a) { cmMascot.dataset.anim = a; }
 const eqEls = [];
 for (let i = 0; i < 30; i++) { const b = document.createElement("i"); $("eq").appendChild(b); eqEls.push(b); }
@@ -545,7 +557,7 @@ const DEMO_LYRICS = [
   "晚风 轻轻 哼着 <b class='k3'>歌</b>",
   "星星 排好队 为你 <b class='k2'>闪烁</b>",
 ];
-let lyricMode = true, lrcLines = [], lrcPtr = 0, lyricIdx = 0, lyricTimer = null;
+let lyricMode = true, lrcLines = [], lrcShown = -1, lyricIdx = 0, lyricTimer = null;
 
 async function fetchLrc(id) {
   try {
@@ -588,8 +600,8 @@ async function loadLyrics(track) {
     window.cmLog && window.cmLog("LRC id=" + track.id + " lines=" + lrcLines.length);
   }
   if (lrcLines.length) {
+    lrcShown = -1;
     renderSubtitle(colorize(lrcLines[0].text), "网易云歌词 · " + lrcLines.length + " 行");
-    lrcPtr = 1;
   } else {
     nextDemoLyric();
     lyricTimer = setInterval(() => { if (state.playing) nextDemoLyric(); }, 4200);
@@ -599,11 +611,16 @@ function stopLyrics() { clearInterval(lyricTimer); lyricTimer = null; }
 function syncLrc() {
   if (!lrcLines.length || !state.seekable || !state.playing) return;
   const t = audio.currentTime + 0.25;
-  if (lrcPtr >= lrcLines.length) return;
-  if (lrcLines[lrcPtr].t <= t) {
-    while (lrcPtr + 1 < lrcLines.length && lrcLines[lrcPtr + 1].t <= t) lrcPtr++;
-    renderSubtitle(colorize(lrcLines[lrcPtr].text), "网易云歌词 · " + lrcLines.length + " 行");
-    lrcPtr++;
+  /* 二分查找当前行: 支持往回 seek 后立即同步 */
+  let lo = 0, hi = lrcLines.length - 1, idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (lrcLines[mid].t <= t) { idx = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  if (idx < 0) idx = 0;
+  if (idx !== lrcShown) {
+    lrcShown = idx;
+    renderSubtitle(colorize(lrcLines[idx].text), "网易云歌词 · " + lrcLines.length + " 行");
   }
 }
 
@@ -616,12 +633,22 @@ function setPlayingUI(on) {
 }
 function loadTrack(i) {
   if (!state.queue.length) return;
-  state.cur = (i + state.queue.length) % state.queue.length;
+  /* 跳过无音源曲目(QQ未登录等), 最多绕队列一圈 */
+  let tries = 0;
+  const hasUrl = (t) => !!(t.outer || t.url || t.url_resolved);
+  while (tries < state.queue.length && !hasUrl(state.queue[(i + tries) % state.queue.length])) tries++;
+  if (tries >= state.queue.length) {
+    echo("<span class='p'>⏺</span> 队列中没有可播放的曲目（未登录平台仅有元数据）", "err");
+    cmSay("没有能播的曲目，先换个搜索词或等登录功能", 3200, true);
+    return;
+  }
+  if (tries > 0) echo("<span class='p'>⏺</span> 已跳过 " + tries + " 首不可播放曲目", "dim");
+  state.cur = (i + tries) % state.queue.length;
   const t = state.queue[state.cur];
   state.seekable = !!t.outer;
   const rawUrl = t.outer || t.url || t.url_resolved;
   resetSongStats(); fluxHist = [];
-  window.cmLog && window.cmLog("LOAD name=" + t.name + " src=" + rawUrl.slice(0, 100));
+  window.cmLog && window.cmLog("LOAD name=" + t.name + " src=" + String(rawUrl).slice(0, 100));
   if (window.__CM_IS_TAURI__ && /music\.163\.com|126\.net/.test(rawUrl)) {
     window.__CM_PROXY__(rawUrl).then(u => {
       audio.crossOrigin = "anonymous";
@@ -642,13 +669,21 @@ function loadTrack(i) {
   cmWalkTo($("np-line"));
   cmSay("正在播放: " + t.name, 3000, true);
 }
-audio.addEventListener("playing", () => setPlayingUI(true));
+audio.addEventListener("playing", () => { failStreak = 0; setPlayingUI(true); });
 audio.addEventListener("pause", () => { if (!audio.ended) { state.playing = false; $("btn-play").textContent = "▶"; mascotSet("idle"); } });
 audio.addEventListener("ended", () => { if (state.queue.length) loadTrack(state.cur + 1); });
+let failStreak = 0;
 audio.addEventListener("error", () => {
   if (!audio.src) return;
+  failStreak++;
   echo("<span class='p'>⏺</span> 该曲目可能需要登录/会员权限（VIP曲目登录后解锁）", "err");
   cmSay("这首要会员…先听下一首吧", 3200, true);
+  if (failStreak >= Math.min(5, state.queue.length)) {
+    echo("<span class='p'>⏺</span> 连续 " + failStreak + " 首播放失败，已停止自动连播（换歌或 diag 自检）", "err");
+    cmSay("连续失败，先停下来了", 3200, true);
+    failStreak = 0;
+    return;
+  }
   setTimeout(() => { if (state.queue.length > 1) loadTrack(state.cur + 1); }, 1800);
 });
 audio.addEventListener("timeupdate", () => {
