@@ -6,22 +6,41 @@
 
 use std::io::{Read, Write};
 use tauri::http::{Response, StatusCode};
+use tauri::Manager;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_BODY: u64 = 48 * 1024 * 1024; // 48MB 上限(网易云 mp3 约 3-10MB)
 
-/// 前端黑匣子日志: 写入 D:/ClaudeMusic/logs/cm-debug.log, 便于离线诊断
+/// 前端黑匣子日志: 写入 Tauri 标准日志目录(随安装位置自适应, 不硬编码盘符)
+/// 文件带 UTF-8 BOM(中文 Windows 下记事本/PowerShell 不乱码), 超 2MB 自动轮转
 #[tauri::command]
-fn app_log(msg: String) {
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("D:/ClaudeMusic/logs/cm-debug.log")
-    {
+fn app_log(app: tauri::AppHandle, msg: String) {
+    let dir = match app.path().app_log_dir() {
+        Ok(d) => d,
+        Err(_) => std::env::temp_dir(),
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("claudemusic.log");
+    let is_new = !path.exists();
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        if is_new {
+            let _ = f.write_all(b"\xEF\xBB\xBF"); // UTF-8 BOM
+        }
+        // 轮转: 超 2MB 归档为 .old 后重写
+        let need_rotate = std::fs::metadata(&path).map(|m| m.len() > 2 * 1024 * 1024).unwrap_or(false);
+        if need_rotate {
+            drop(f);
+            let _ = std::fs::rename(&path, dir.join("claudemusic.log.old"));
+            if let Ok(mut f2) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                let _ = f2.write_all(b"\xEF\xBB\xBF");
+                let _ = writeln!(f2, "{}", msg);
+            }
+            return;
+        }
+        let ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
         let _ = writeln!(f, "[{}.{:03}] {}", ms / 1000, ms % 1000, msg);
     }
 }
@@ -107,7 +126,6 @@ fn handle_proxy(target: String, range: Option<String>) -> Response<Vec<u8>> {
 }
 
 fn main() {
-    let _ = std::fs::create_dir_all("D:/ClaudeMusic/logs");
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![app_log])
         // 异步协议处理器: 网络请求在独立线程执行, 不阻塞 UI/WebView 线程

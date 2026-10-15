@@ -347,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "claudemusic"
-version = "0.3.0"
+version = "0.4.6"
 dependencies = [
  "reqwest 0.12.28",
  "tauri",

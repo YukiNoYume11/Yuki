@@ -14,6 +14,8 @@ U1 是唯一硬依赖核心：U2 只是 U1 的原生外壳，U1 可独立开发�
 
 ## 常用回退操作
 
+> 前提：git 可用。本项目一直在 Git Bash 环境中操作（WorkBuddy 终端自带）；若在 PowerShell/CMD 中提示找不到 git，请安装 Git for Windows 或改用 Git Bash。
+
 ```bash
 cd /d/ClaudeMusic
 
@@ -53,3 +55,9 @@ export PATH="/d/ClaudeMusic/toolchain/cargo/bin:$PATH"
 ```
 
 卸载 = 删除 toolchain 目录，系统无残留。
+
+## 磁盘与日志维护
+
+- `target/` 构建缓存约 2.7GB：空间紧张时 `cargo clean`（下次构建全量重编）
+- `toolchain/` 约 1.1GB：随目录删除即卸载
+- 运行日志：Tauri 标准日志目录（`%APPDATA%\local.claudemusic\logs\claudemusic.log`，UTF-8 BOM），超 2MB 自动轮转为 `.old`
