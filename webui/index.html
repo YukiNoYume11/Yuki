@@ -116,6 +116,9 @@
   .pbar .tr { width: 100%; height: 3px; background: var(--border); border-radius: 2px; position: relative; }
   .pbar .fl { position: absolute; left: 0; top: 0; height: 100%; background: var(--accent); width: 0%; border-radius: 2px; }
   .tm { color: var(--faint); font-size: 11px; width: 80px; flex-shrink: 0; }
+  /* 音质档位可视化标签: 独立固定位置, 不被长歌名省略 */
+  .qtag { color: var(--accent); font-size: 10px; border: 1px solid var(--accent-dark); border-radius: 4px; padding: 1px 5px; flex-shrink: 0; letter-spacing: 0.5px; }
+  .qtag.pending { color: var(--faint); border-color: var(--border); }
   /* 歌名可缩可截断, 进度条保底宽度——长歌名不再挤占进度条 */
   .np { color: var(--dim); font-size: 12px; flex: 0 1 auto; min-width: 0; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .np b { color: var(--text); font-weight: 500; }
@@ -343,6 +346,7 @@
         <span class="np" id="np-line">未在播放</span>
         <div class="pbar" id="progress-bar"><div class="tr"><div class="fl" id="p-fill"></div></div></div>
         <span class="tm" id="time-cur">0:00 / 0:00</span>
+        <span class="qtag" id="q-tag" title="当前音质" style="display:none"></span>
         <button class="btn" id="btn-speed" title="倍速(点击循环)" style="width:auto;padding:0 7px;font-size:10px">1.0x</button>
         <div class="vol" id="vol-widget">
           <span class="lb">VOL</span>
@@ -995,6 +999,15 @@ const QUALITIES = [
 let qualityKey = localStorage.getItem("cm_quality") || "exhigh";
 if (!QUALITIES.some(q => q.key === qualityKey)) qualityKey = "exhigh";
 function qualityLabel(key) { const q = QUALITIES.find(x => x.key === key); return q ? q.label : key; }
+/* 播放条音质标签: 短码可视化(128k/320k/SQ/Hi-Res/母带), pending=取链中按目标档位预显 */
+const QTAG_SHORT = { standard: "128k", exhigh: "320k", lossless: "SQ", hires: "Hi-Res", jymaster: "母带" };
+function updateQTag(level, pending) {
+  const el = $("q-tag");
+  if (!level) { el.style.display = "none"; return; }
+  el.textContent = QTAG_SHORT[level] || level;
+  el.className = "qtag" + (pending ? " pending" : "");
+  el.style.display = "";
+}
 
 /* 解析可播放 URL: 登录态下先取 VIP 可播链接(带音质偏好), 失败回退 outer/url */
 async function setAudioSrc(t) {
@@ -1066,12 +1079,14 @@ function loadTrack(i) {
   state.seekable = !!t.outer || (t.src === "qq" && !!t.mid && qqLoggedIn);
   resetSongStats(); fluxHist = [];
   window.cmLog && window.cmLog("LOAD name=" + t.name + " src=" + String(t.outer || t.url || t.url_resolved || t.mid || "").slice(0, 100));
+  /* 音质可视化: 取链期间按目标档位预显(pending 灰), 命中后显示实际档位 */
+  const needFetch = (cmLoggedIn && t.src === "netease" && t.id) || (qqLoggedIn && t.src === "qq" && t.mid);
+  updateQTag(needFetch ? qualityKey : null, true);
   setAudioSrc(t).then((lv) => {
     audio.volume = state.vol;
     audio.play().catch(() => {});
-    /* 音质徽标: 实际命中档位(可能与偏好不同——降级时会提示) */
-    const badge = lv ? " <span style='color:var(--accent);font-size:10px'>[" + esc(qualityLabel(lv)) + "]</span>" : "";
-    $("np-line").innerHTML = "<b>" + esc(t.name) + "</b> — " + esc(t.artist || t.country || "") + badge;
+    updateQTag(lv || (needFetch ? qualityKey : null), !lv && !!needFetch);
+    $("np-line").innerHTML = "<b>" + esc(t.name) + "</b> — " + esc(t.artist || t.country || "");
   });
   document.querySelectorAll(".row").forEach(el => el.classList.remove("on"));
   const rows = document.querySelectorAll("#out .row");
@@ -1161,9 +1176,14 @@ async function qqSearch(q) {
     const d = await r.json();
     return (((d.data || {}).song || {}).list || []).map(s => ({
       name: s.songname, src: "qq",
+      mid: s.songmid, mediaMid: s.strMediaMid || "",
+      id: s.songid,
       artist: (s.singer || []).map(a => a.name).join("/"),
       album: s.albumname || "",
+      dt: (s.interval || 0) * 1000,
       vip: (s.pay || {}).payplay !== 0,
+      hasHQ: (s.size320 || 0) > 0,
+      hasSQ: (s.sizeflac || 0) > 0 || (s.sizeape || 0) > 0,
     }));
   } catch (e) { return []; }
 }
@@ -1491,6 +1511,7 @@ async function execCmd(raw) {
       }
       qualityKey = q.key;
       try { localStorage.setItem("cm_quality", qualityKey); } catch (e) {}
+      updateQTag(qualityKey, true);
       echo("<span class='p'>⏺</span> 音质已切换为 <b>" + q.label + "</b>（下一首起生效）", "ok");
       cmSay("音质 → " + q.label, 2600, true);
       break;
