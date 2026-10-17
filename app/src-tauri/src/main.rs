@@ -123,18 +123,11 @@ fn handle_proxy(app: tauri::AppHandle, target: String, range: Option<String>) ->
     if target.contains("qq.com") {
         req = req.header("Referer", "https://y.qq.com/");
     }
-    // 网易 CDN(m70x/m80x.music.126.net)对 VIP 音频有防盗链: 需浏览器 UA(get_client 已设)+ Referer, 否则 403
+    // 网易 CDN(m70x/m80x.music.126.net)取流: 浏览器 UA(get_client 已设)+ Referer。
+    // 注意: 绝不向 126.net CDN 透传 .163.com 的 MUSIC_U Cookie——跨域 Cookie 会被 Tengine 边缘直接 403
+    // (实测: 带 Cookie→403 text/html; 不带→200)。浏览器取媒体流本就不带跨域 Cookie。
     if target.contains("126.net") || target.contains("163.com") {
         req = req.header("Referer", "https://music.163.com/");
-        // 关键: 网易 VIP 直链与会话绑定——不带登录 Cookie 取流会返回 text/plain 防盗链页(非音频)。
-        // 这里把进程内登录态的 Cookie 透传给网易自家 CDN(同信任域, 用户本人账号, 不泄漏第三方)。
-        if let Some(st) = app.try_state::<LoginState>() {
-            if let Ok(g) = st.inner().0.lock() {
-                if let Some(info) = g.as_ref() {
-                    req = req.header("Cookie", info.cookie.as_str());
-                }
-            }
-        }
     }
     // 转发 Range 头 → 上游返回 206 分段, 音频 seek 才能正常工作
     if let Some(r) = &range {
@@ -595,25 +588,49 @@ fn netease_playlist_detail(app: tauri::AppHandle, state: tauri::State<'_, LoginS
 fn netease_song_url(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, id: i64) -> Result<String, String> {
     let cookie = login_info(&state).map(|i| i.cookie);
     let ids = format!("[{id}]");
-    let j = weapi_post(
-        "/weapi/song/enhance/player/url",
-        serde_json::json!({"ids": ids, "br": 320000}),
-        cookie.as_deref(),
-    )?;
-    let code = j["code"].as_i64().unwrap_or(-1);
-    let url = j["data"][0]["url"].as_str().unwrap_or("").to_string();
-    let host = url::Url::parse(&url)
-        .ok()
-        .and_then(|u| u.host_str().map(|h| h.to_string()))
-        .unwrap_or_default();
-    log_msg(
-        &app,
-        &format!("SONGURL id={id} code={code} urlLen={} host={} hasCookie={}", url.len(), host, cookie.is_some()),
-    );
-    if url.is_empty() {
+    let ck = cookie.as_deref();
+    // 网易对 SVIP 账号在高码率下会返回 jdymusic/obj 高级对象存储直链, 该链路 CDN 侧拒绝直连
+    // (无 Cookie→200 text/plain 提示页; 带跨域 Cookie→Tengine 403), 均非可播音频。
+    // 标准码率(128k)通常走开放的 ymusic 直链(实测可直接播放)。故按码率降序尝试, 命中非 jdymusic 即返回。
+    let mut fallback = String::new();
+    for br in [320000u32, 192000, 128000] {
+        let j = match weapi_post(
+            "/weapi/song/enhance/player/url",
+            serde_json::json!({"ids": ids, "br": br}),
+            ck,
+        ) {
+            Ok(j) => j,
+            Err(e) => {
+                log_msg(&app, &format!("SONGURL id={id} br={br} err={e}"));
+                continue;
+            }
+        };
+        let url = j["data"][0]["url"].as_str().unwrap_or("").to_string();
+        if url.is_empty() {
+            log_msg(&app, &format!("SONGURL id={id} br={br} code={} emptyUrl", j["code"].as_i64().unwrap_or(-1)));
+            continue;
+        }
+        let host = url::Url::parse(&url)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.to_string()))
+            .unwrap_or_default();
+        let jd = url.contains("jdymusic");
+        log_msg(
+            &app,
+            &format!("SONGURL id={id} br={br} code={} host={} jdymusic={} urlLen={}", j["code"].as_i64().unwrap_or(-1), host, jd, url.len()),
+        );
+        if !jd {
+            return Ok(url); // 开放 ymusic 直链, 直接可用
+        }
+        if fallback.is_empty() {
+            fallback = url; // 记下首个 jdymusic 直链作最后兜底
+        }
+    }
+    if fallback.is_empty() {
         Err("no url".into())
     } else {
-        Ok(url)
+        log_msg(&app, &format!("SONGURL id={id} 仅有 jdymusic 高级直链(可能无法播放)"));
+        Ok(fallback)
     }
 }
 
