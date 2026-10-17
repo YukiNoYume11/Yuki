@@ -1,6 +1,6 @@
 [package]
 name = "claudemusic"
-version = "0.5.6"
+version = "0.5.7"
 description = "私人非商用音乐播放器 — Claude Code 风格"
 edition = "2021"
 
@@ -23,6 +23,7 @@ num-bigint = "0.4"
 num-traits = "0.2"
 rand = "0.8"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+encoding_rs = "0.8"
 
 [profile.release]
 strip = true

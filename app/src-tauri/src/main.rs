@@ -1237,6 +1237,54 @@ fn qq_song_url(app: tauri::AppHandle, state: tauri::State<'_, QqState>, mid: Str
     Err("QQ 未返回可播链接(可能需 VIP 或曲目无版权)".into())
 }
 
+/// QQ 歌词: fcg_query_lyric_new 返回 base64 编码的 LRC(及可选翻译 trans); 无需登录
+#[tauri::command]
+fn qq_lyric(app: tauri::AppHandle, state: tauri::State<'_, QqState>, mid: String) -> Result<serde_json::Value, String> {
+    let cookie = qq_info(&state).map(|i| i.cookie).unwrap_or_default();
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let url = format!(
+        "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={mid}&format=json&nobase64=0&g_tk=5381&loginUin=0&hostUin=0&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq.json&needNewCode=0&pcachetime={ts}"
+    );
+    let resp = get_client()
+        .get(url)
+        .header("Referer", "https://y.qq.com/portal/player.html")
+        .header("Cookie", cookie)
+        .send()
+        .map_err(|e| e.to_string())?;
+    let text = resp.text().map_err(|e| e.to_string())?;
+    let j: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("lyric json 解析失败: {e} body={}", &text[..text.len().min(200)]))?;
+    let decode = |k: &str| -> String {
+        j[k]
+            .as_str()
+            .and_then(|s| B64.decode(s).ok())
+            .map(|b| {
+                // 歌词内容可能是 UTF-8 或 GBK(老歌): 先 UTF-8, 失败按 GBK 解码
+                match String::from_utf8(b.clone()) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        let (s, _, _) = encoding_rs::GBK.decode(&b);
+                        s.into_owned()
+                    }
+                }
+            })
+            .unwrap_or_default()
+    };
+    let mut lyric = decode("lyric");
+    let trans = decode("trans");
+    log_msg(&app, &format!("QLYRIC mid={mid} code={} lrcLen={} transLen={}", j["code"].as_i64().unwrap_or(-1), lyric.len(), trans.len()));
+    if lyric.is_empty() {
+        lyric = trans.clone(); // 纯外文曲: 用翻译兜底
+    }
+    if lyric.is_empty() {
+        return Err("QQ 无歌词".into());
+    }
+    Ok(serde_json::json!({"lyric": lyric, "trans": trans}))
+}
+
 fn main() {
     for var in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"] {
         std::env::remove_var(var);
@@ -1262,7 +1310,8 @@ fn main() {
             qq_logout,
             qq_user_playlists,
             qq_playlist_detail,
-            qq_song_url
+            qq_song_url,
+            qq_lyric
         ])
         // 异步协议处理器: 网络请求在独立线程执行, 不阻塞 UI/WebView 线程
         .register_asynchronous_uri_scheme_protocol("proxy", |ctx, request, responder| {
