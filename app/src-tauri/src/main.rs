@@ -102,6 +102,41 @@ fn auth_client() -> &'static reqwest::blocking::Client {
     })
 }
 
+/// 执行一次代理抓取, 返回 (状态码, Content-Type, Content-Range, 响应体)
+/// 注意: 绝不向 126.net CDN 透传 .163.com 的 MUSIC_U Cookie——跨域 Cookie 会被 Tengine 边缘直接 403。
+/// 浏览器取媒体流本就不带跨域 Cookie; 这里只用浏览器 UA(get_client 已设)+ Referer。
+fn proxy_fetch(target: &str, range: &Option<String>) -> Result<(StatusCode, String, Option<String>, Vec<u8>), String> {
+    let client = get_client();
+    let mut req = client.get(target);
+    // QQ 音乐接口需要 Referer 才返回数据
+    if target.contains("qq.com") {
+        req = req.header("Referer", "https://y.qq.com/");
+    }
+    if target.contains("126.net") || target.contains("163.com") {
+        req = req.header("Referer", "https://music.163.com/");
+    }
+    // 转发 Range 头 → 上游返回 206 分段, 音频 seek 才能正常工作
+    if let Some(r) = range {
+        req = req.header("Range", r);
+    }
+    let resp = req.send().map_err(|e| e.to_string())?;
+    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::OK);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let content_range = resp
+        .headers()
+        .get("content-range")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let mut buf = Vec::with_capacity(1 << 20);
+    let _ = resp.take(MAX_BODY).read_to_end(&mut buf);
+    Ok((status, ct, content_range, buf))
+}
+
 fn handle_proxy(app: tauri::AppHandle, target: String, range: Option<String>) -> Response<Vec<u8>> {
     let allowed = url::Url::parse(&target)
         .ok()
@@ -116,48 +151,32 @@ fn handle_proxy(app: tauri::AppHandle, target: String, range: Option<String>) ->
             .unwrap();
     }
 
-    let client = get_client();
+    let mut used = target.clone();
+    let mut result = proxy_fetch(&used, &range);
 
-    let mut req = client.get(&target);
-    // QQ 音乐接口需要 Referer 才返回数据
-    if target.contains("qq.com") {
-        req = req.header("Referer", "https://y.qq.com/");
-    }
-    // 网易 CDN(m70x/m80x.music.126.net)取流: 浏览器 UA(get_client 已设)+ Referer。
-    // 注意: 绝不向 126.net CDN 透传 .163.com 的 MUSIC_U Cookie——跨域 Cookie 会被 Tengine 边缘直接 403
-    // (实测: 带 Cookie→403 text/html; 不带→200)。浏览器取媒体流本就不带跨域 Cookie。
-    if target.contains("126.net") || target.contains("163.com") {
-        req = req.header("Referer", "https://music.163.com/");
-    }
-    // 转发 Range 头 → 上游返回 206 分段, 音频 seek 才能正常工作
-    if let Some(r) = &range {
-        req = req.header("Range", r);
+    // 网易 VIP 高级直链(jdymusic, http://)常被 CDN 边缘 403; 升级 https:// 重试一次
+    let need_https = if let Ok((st, _, _, _)) = &result {
+        st.as_u16() == 403 && used.starts_with("http://") && used.contains("music.126.net")
+    } else {
+        false
+    };
+    if need_https {
+        let https_target = format!("https://{}", &used["http://".len()..]);
+        log_msg(&app, &format!("PROXY http 403 → 重试 https url={}", &https_target[..https_target.len().min(120)]));
+        result = proxy_fetch(&https_target, &range);
+        used = https_target;
     }
 
-    match req.send() {
-        Ok(resp) => {
-            let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::OK);
-            let ct = resp
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("application/octet-stream")
-                .to_string();
-            let content_range = resp
-                .headers()
-                .get("content-range")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string());
-            let mut buf = Vec::with_capacity(1 << 20);
-            let _ = resp.take(MAX_BODY).read_to_end(&mut buf);
-            // 音频 CDN 探针: 记录状态/类型/字节数, 排障 VIP 播放(403/格式错误)必读
-            if target.contains("126.net") || target.contains("163.com") {
+    match result {
+        Ok((status, ct, content_range, buf)) => {
+            // 音频 CDN 探针(仅 music.126.net 音频流, 不含 163.com 的 lyric/search API, 避免刷屏):
+            // 正常音频为数 MB 的 audio/mpeg; 若响应很小则是防盗链/错误文本, dump 前 300 字定位
+            if target.contains("music.126.net") {
                 let mut line = format!(
                     "PROXY music status={status} ct={ct} bytes={} url={}",
                     buf.len(),
-                    &target[..target.len().min(90)]
+                    &used[..used.len().min(120)]
                 );
-                // 正常音频为数 MB 的 audio/mpeg; 若响应很小则是防盗链/错误文本, dump 前 300 字定位
                 if buf.len() < 100_000 {
                     let preview: String = String::from_utf8_lossy(&buf[..buf.len().min(300)])
                         .chars()
@@ -589,25 +608,26 @@ fn netease_song_url(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, 
     let cookie = login_info(&state).map(|i| i.cookie);
     let ids = format!("[{id}]");
     let ck = cookie.as_deref();
-    // 网易对 SVIP 账号在高码率下会返回 jdymusic/obj 高级对象存储直链, 该链路 CDN 侧拒绝直连
-    // (无 Cookie→200 text/plain 提示页; 带跨域 Cookie→Tengine 403), 均非可播音频。
-    // 标准码率(128k)通常走开放的 ymusic 直链(实测可直接播放)。故按码率降序尝试, 命中非 jdymusic 即返回。
+    // 旧接口 /weapi/song/enhance/player/url 对 SVIP 账号返回 jdymusic/obj 高级对象存储直链,
+    // 该链路 CDN 侧一律 403(Tengine 无权限), 非可播音频。改用 v1 接口显式指定 level:
+    // exhigh(320k)/standard(128k) 属常规档, 走开放 ymusic 直链(实测可直接播放);
+    // 避开 jymaster/jyeffect 等 "jy" 高级档(=jdymusic)。命中非 jdymusic 直链立即返回。
     let mut fallback = String::new();
-    for br in [320000u32, 192000, 128000] {
+    for level in ["exhigh", "standard", "lossless"] {
         let j = match weapi_post(
-            "/weapi/song/enhance/player/url",
-            serde_json::json!({"ids": ids, "br": br}),
+            "/weapi/song/enhance/player/url/v1",
+            serde_json::json!({"ids": ids, "level": level, "encodeType": "flac", "csrf_token": ""}),
             ck,
         ) {
             Ok(j) => j,
             Err(e) => {
-                log_msg(&app, &format!("SONGURL id={id} br={br} err={e}"));
+                log_msg(&app, &format!("SONGURL v1 id={id} level={level} err={e}"));
                 continue;
             }
         };
         let url = j["data"][0]["url"].as_str().unwrap_or("").to_string();
         if url.is_empty() {
-            log_msg(&app, &format!("SONGURL id={id} br={br} code={} emptyUrl", j["code"].as_i64().unwrap_or(-1)));
+            log_msg(&app, &format!("SONGURL v1 id={id} level={level} code={} emptyUrl", j["code"].as_i64().unwrap_or(-1)));
             continue;
         }
         let host = url::Url::parse(&url)
@@ -617,19 +637,37 @@ fn netease_song_url(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, 
         let jd = url.contains("jdymusic");
         log_msg(
             &app,
-            &format!("SONGURL id={id} br={br} code={} host={} jdymusic={} urlLen={}", j["code"].as_i64().unwrap_or(-1), host, jd, url.len()),
+            &format!("SONGURL v1 id={id} level={level} code={} host={} jdymusic={} urlLen={}", j["code"].as_i64().unwrap_or(-1), host, jd, url.len()),
         );
         if !jd {
             return Ok(url); // 开放 ymusic 直链, 直接可用
         }
         if fallback.is_empty() {
-            fallback = url; // 记下首个 jdymusic 直链作最后兜底
+            fallback = url;
+        }
+    }
+    // v1 全为 jdymusic 时, 退回旧接口再试一次
+    if !fallback.is_empty() {
+        log_msg(&app, &format!("SONGURL id={id} v1 仅得 jdymusic, 回退旧接口"));
+    }
+    if let Ok(j) = weapi_post(
+        "/weapi/song/enhance/player/url",
+        serde_json::json!({"ids": ids, "br": 320000}),
+        ck,
+    ) {
+        let url = j["data"][0]["url"].as_str().unwrap_or("").to_string();
+        if !url.is_empty() && !url.contains("jdymusic") {
+            log_msg(&app, &format!("SONGURL old id={id} host=ymusic urlLen={}", url.len()));
+            return Ok(url);
+        }
+        if fallback.is_empty() && !url.is_empty() {
+            fallback = url;
         }
     }
     if fallback.is_empty() {
         Err("no url".into())
     } else {
-        log_msg(&app, &format!("SONGURL id={id} 仅有 jdymusic 高级直链(可能无法播放)"));
+        log_msg(&app, &format!("SONGURL id={id} 仅有 jdymusic 高级直链(CDN 403, 无法播放)"));
         Ok(fallback)
     }
 }
