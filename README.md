@@ -23,6 +23,9 @@ D:\ClaudeMusic\
 
 - 音源：网易云音乐公开接口（搜索/元数据 + 免费曲目外链播放）；QQ 音乐搜索已接入（仅元数据浏览，播放暂跳过）；Radio Browser 华语电台兜底
 - **网易云登录（v0.4.11）**：扫码登录为主、粘贴 Cookie 兜底（`login` / `login cookie <值>`）；登录后解锁 VIP 曲目播放与「我的歌单」侧边栏；`playlist <url|id>` 可导入任意网易云歌单（公开歌单无需登录）
+- **原生级搜索（v0.5.0）**：主通道升级为 weapi cloudsearch（官方客户端同款排序，带热度/VIP/时长字段）；本地再融合相关度评分——歌名精确/前缀匹配加权、歌手命中加权、未明确指定时 Live/翻唱/伴奏降权、热度加权、原生顺序 tie-break
+- **音质选择（v0.5.0）**：`quality` 查看，`quality standard|exhigh|lossless|hires|jymaster` 切换（无损/Hi-Res/母带需 VIP/SVIP，登录后生效）；取链按偏好逐级降级保证可播，播放条显示实际音质徽标；选择持久化
+- **歌词同步优化（v0.5.0）**：同步引擎由 timeupdate（约 4Hz）改为 120ms 定时器驱动；支持 LRC `[offset:]` 元标签与一行多时间戳；`lyric offset ±秒` 手动校准并持久化
 - UI：Claude Code 风格（暗色 #1F1E1D / 赭橙 #D97757 / 等宽字体 / 命令输入栏）
 - 吉祥物：Claude 像素形象浮动层，播放事件驱动交互（走位/气泡/情绪律动）
 

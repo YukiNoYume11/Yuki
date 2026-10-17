@@ -781,14 +781,69 @@ fn netease_playlist_detail(app: tauri::AppHandle, state: tauri::State<'_, LoginS
     Ok(serde_json::json!(list))
 }
 
+/// 原生级搜索: weapi cloudsearch(官方客户端/网页同款排序), 返回含热度(pop)/VIP标记(fee)/时长(dt)等丰富字段
 #[tauri::command]
-fn netease_song_url(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, id: i64) -> Result<String, String> {
+fn netease_search(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, kw: String, limit: Option<u32>) -> Result<serde_json::Value, String> {
+    let cookie = login_info(&state).map(|i| i.cookie);
+    let csrf = cookie.as_deref().map(extract_csrf).unwrap_or_default();
+    let lim = limit.unwrap_or(30);
+    let j = weapi_post(
+        "/weapi/cloudsearch/get/web",
+        serde_json::json!({"s": kw, "type": 1, "limit": lim, "offset": 0, "total": true, "csrf_token": csrf}),
+        cookie.as_deref(),
+    )?;
+    let code = j["code"].as_i64().unwrap_or(-1);
+    let songs = j["result"]["songs"].as_array().cloned().unwrap_or_default();
+    log_msg(&app, &format!("SEARCH cloudsearch kw={} code={} count={}", kw, code, songs.len()));
+    if code != 200 {
+        return Err(format!("cloudsearch code={code}"));
+    }
+    let list: Vec<serde_json::Value> = songs
+        .into_iter()
+        .map(|t| {
+            let artist = t["ar"]
+                .as_array()
+                .map(|ar| {
+                    ar.iter()
+                        .filter_map(|a| a["name"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("/")
+                })
+                .unwrap_or_default();
+            serde_json::json!({
+                "id": t["id"],
+                "name": t["name"],
+                "artist": artist,
+                "album": t["al"]["name"],
+                "dt": t["dt"],
+                "pop": t["pop"],
+                "fee": t["fee"],
+                "alia": t["alia"],
+            })
+        })
+        .collect();
+    Ok(serde_json::json!(list))
+}
+
+/// 取可播直链, 支持音质偏好: standard(128k)/exhigh(320k)/lossless(无损)/hires(Hi-Res)/jymaster(母带)
+/// 返回 {"url","level","br","size"} —— level 为实际命中的档位(可能因版权/会员等级降级)
+#[tauri::command]
+fn netease_song_url(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, id: i64, level: Option<String>) -> Result<serde_json::Value, String> {
     let cookie = login_info(&state).map(|i| i.cookie);
     let ck = cookie.as_deref();
+    let want = level.unwrap_or_else(|| "exhigh".to_string());
+    // 偏好降级链: 高档位拿不到时逐级回退, 保证有歌可播
+    let prefs: Vec<&str> = match want.as_str() {
+        "standard" => vec!["standard"],
+        "lossless" => vec!["lossless", "exhigh", "standard"],
+        "hires" => vec!["hires", "lossless", "exhigh", "standard"],
+        "jymaster" => vec!["jymaster", "hires", "lossless", "exhigh", "standard"],
+        _ => vec!["exhigh", "standard"],
+    };
     // 主路径: eapi(官方客户端身份)。weapi(os_web)对"需客户端播放"的 VIP 曲只给受限 jdymusic 直链(CDN 403),
-    // eapi 换取可拉取的 ymusic / jd-musicrep-ts 直链(Node 实测返回真实 MP3)。命中非 jdymusic 立即返回。
+    // eapi 换取可拉取的 ymusic / jd-musicrep-ts 直链(Node 实测返回真实 MP3)。
     let mut fallback = String::new();
-    for level in ["exhigh", "standard", "lossless"] {
+    for level in &prefs {
         let data = serde_json::json!({"ids": format!("[{id}]"), "level": level, "encodeType": "flac"});
         match eapi_post("/api/song/enhance/player/url/v1", ck, data) {
             Ok(j) => {
@@ -801,14 +856,14 @@ fn netease_song_url(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, 
                     .ok()
                     .and_then(|u| u.host_str().map(|h| h.to_string()))
                     .unwrap_or_default();
-                let jd = url.contains("jdymusic");
+                let real_level = j["data"][0]["level"].as_str().unwrap_or(level).to_string();
+                let br = j["data"][0]["br"].as_i64().unwrap_or(0);
                 log_msg(
                     &app,
-                    &format!("SONGURL eapi id={id} level={level} code={} host={} jdymusic={} urlLen={}", j["code"].as_i64().unwrap_or(-1), host, jd, url.len()),
+                    &format!("SONGURL eapi id={id} want={want} level={real_level} code={} host={} br={br} urlLen={}", j["code"].as_i64().unwrap_or(-1), host, url.len()),
                 );
                 // eapi(客户端身份)取得的直链均已授权可播——即便是 jdymusic 路径(实测 206 audio/mpeg)。
-                // 故命中首个非空直链即返回, 不再逐档试探(省去 ~400ms 延迟)。
-                return Ok(url);
+                return Ok(serde_json::json!({"url": url, "level": real_level, "br": br}));
             }
             Err(e) => log_msg(&app, &format!("SONGURL eapi id={id} level={level} err={e}")),
         }
@@ -825,7 +880,7 @@ fn netease_song_url(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, 
                 let url = j["data"][0]["url"].as_str().unwrap_or("").to_string();
                 if !url.is_empty() && !url.contains("jdymusic") {
                     log_msg(&app, &format!("SONGURL weapi id={id} level={level} urlLen={}", url.len()));
-                    return Ok(url);
+                    return Ok(serde_json::json!({"url": url, "level": level}));
                 }
                 if fallback.is_empty() && !url.is_empty() {
                     fallback = url;
@@ -837,7 +892,7 @@ fn netease_song_url(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, 
         Err("no url".into())
     } else {
         log_msg(&app, &format!("SONGURL id={id} 仅有 jdymusic 高级直链(CDN 403, 无法播放)"));
-        Ok(fallback)
+        Ok(serde_json::json!({"url": fallback, "level": "unknown"}))
     }
 }
 
@@ -857,7 +912,8 @@ fn main() {
             netease_status,
             netease_user_playlists,
             netease_playlist_detail,
-            netease_song_url
+            netease_song_url,
+            netease_search
         ])
         // 异步协议处理器: 网络请求在独立线程执行, 不阻塞 UI/WebView 线程
         .register_asynchronous_uri_scheme_protocol("proxy", |ctx, request, responder| {

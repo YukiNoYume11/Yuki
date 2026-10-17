@@ -304,7 +304,7 @@
     </div>
 
     <div class="out" id="out">
-      <div class="ln dim">ClaudeMusic v0.4.3 — play 关键词 / radio 名称 / demo / mood / diag / help</div>
+      <div class="ln dim">ClaudeMusic v0.5.0 — play 关键词 / quality 音质 / lyric offset 校准 / diag / help</div>
     </div>
 
     <div class="viz-strip">
@@ -647,6 +647,9 @@ const DEMO_LYRICS = [
   "星星 排好队 为你 <b class='k2'>闪烁</b>",
 ];
 let lyricMode = true, lrcLines = [], lrcShown = -1, lyricIdx = 0, lyricTimer = null;
+/* 歌词时间校正: meta 来自 LRC [offset:] 标签(正=提前), user 来自 lyric offset 命令(秒), lead 为预显示提前量 */
+let lrcMetaOffset = 0, lrcUserOffset = parseFloat(localStorage.getItem("cm_lrc_offset") || "0") || 0;
+const LRC_LEAD = 0.18;
 
 async function fetchLrc(id) {
   try {
@@ -658,10 +661,20 @@ async function fetchLrc(id) {
 }
 function parseLrc(text) {
   const arr = [];
+  lrcMetaOffset = 0;
   for (const line of text.split(/\r?\n/)) {
-    const m = line.match(/^\s*\[(\d{1,2}):(\d{1,2}(?:\.\d{1,3})?)\](.*)$/);
-    if (m && m[3].replace(/<[^>]*>/g, "").trim()) {
-      arr.push({ t: (+m[1]) * 60 + parseFloat(m[2]), text: m[3].replace(/<[^>]*>/g, "").trim() });
+    /* [offset:±毫秒] 元标签: 正值=整体提前(行业惯例, 与主流播放器一致) */
+    const om = line.match(/^\s*\[\s*offset\s*:\s*([+-]?\d+)\s*\]/i);
+    if (om) { lrcMetaOffset = parseInt(om[1], 10) / 1000; continue; }
+    /* 支持一行多时间戳: [00:10][00:30]重复句 */
+    const m = line.match(/^\s*((?:\[\d{1,2}:\d{1,2}(?:\.\d{1,3})?\]\s*)+)(.*)$/);
+    if (!m) continue;
+    const txt = m[2].replace(/<[^>]*>/g, "").trim();
+    if (!txt) continue;
+    const tags = m[1].match(/\d{1,2}:\d{1,2}(?:\.\d{1,3})?/g) || [];
+    for (const tg of tags) {
+      const [mm, ss] = tg.split(":");
+      arr.push({ t: (+mm) * 60 + parseFloat(ss), text: txt });
     }
   }
   return arr.sort((a, b) => a.t - b.t);
@@ -702,7 +715,8 @@ async function loadLyrics(track) {
 function stopLyrics() { clearInterval(lyricTimer); lyricTimer = null; }
 function syncLrc() {
   if (!lrcLines.length || !state.seekable || !state.playing) return;
-  const t = audio.currentTime + 0.25;
+  /* 时间轴校正: 当前播放时刻 + 预显示提前量 + LRC元标签偏移 + 用户手动偏移 */
+  const t = audio.currentTime + LRC_LEAD + lrcMetaOffset + lrcUserOffset;
   /* 二分查找当前行: 支持往回 seek 后立即同步 */
   let lo = 0, hi = lrcLines.length - 1, idx = -1;
   while (lo <= hi) {
@@ -715,6 +729,17 @@ function syncLrc() {
     renderSubtitle(colorize(lrcLines[idx].text), "网易云歌词 · " + lrcLines.length + " 行");
   }
 }
+/* 歌词同步引擎: timeupdate 只有 ~4Hz(精度±250ms, 是"字幕慢半拍"的主因之一),
+   播放期间改用 120ms 定时器驱动, 切行延迟降到 0.12s 内; seek 后 timeupdate 兜底立即校正 */
+let lrcSyncTimer = null;
+function startLrcSync() {
+  if (lrcSyncTimer) return;
+  lrcSyncTimer = setInterval(syncLrc, 120);
+}
+function stopLrcSync() { clearInterval(lrcSyncTimer); lrcSyncTimer = null; }
+audio.addEventListener("playing", startLrcSync);
+audio.addEventListener("pause", stopLrcSync);
+audio.addEventListener("ended", stopLrcSync);
 
 /* ==================== 登录 / 歌单(网易云) ==================== */
 function cmInvoke(cmd, args) {
@@ -868,22 +893,45 @@ async function importPlaylist(id, name) {
   }
 }
 
-/* 解析可播放 URL: 登录态下先取 VIP 可播链接, 失败回退 outer/url */
+/* ===== 音质选择(登录后生效; 未登录走 outer 外链, 固定音质) ===== */
+const QUALITIES = [
+  { key: "standard", label: "标准 128k", vip: false },
+  { key: "exhigh",   label: "极高 320k", vip: false },
+  { key: "lossless", label: "无损 FLAC", vip: true },
+  { key: "hires",    label: "Hi-Res",    vip: true },
+  { key: "jymaster", label: "超清母带",  vip: true },
+];
+let qualityKey = localStorage.getItem("cm_quality") || "exhigh";
+if (!QUALITIES.some(q => q.key === qualityKey)) qualityKey = "exhigh";
+function qualityLabel(key) { const q = QUALITIES.find(x => x.key === key); return q ? q.label : key; }
+
+/* 解析可播放 URL: 登录态下先取 VIP 可播链接(带音质偏好), 失败回退 outer/url */
 async function setAudioSrc(t) {
   let rawUrl = t.outer || t.url || t.url_resolved;
+  let actualLevel = null;
   if (cmLoggedIn && t.src === "netease" && t.id) {
-    try { const u = await cmInvoke("netease_song_url", { id: t.id }); if (u) rawUrl = u; } catch (e) {}
+    try {
+      const r = await cmInvoke("netease_song_url", { id: t.id, level: qualityKey });
+      if (r && r.url) {
+        rawUrl = r.url;
+        actualLevel = r.level || null;
+        if (r.level && r.level !== qualityKey && QUALITIES.some(q => q.key === r.level)) {
+          toastLike("音质「" + qualityLabel(qualityKey) + "」不可用，已降为 " + qualityLabel(r.level), "dim");
+        }
+      }
+    } catch (e) {}
   }
   if (window.__CM_IS_TAURI__ && /music\.163\.com|126\.net/.test(rawUrl)) {
     try {
       const u = await window.__CM_PROXY__(rawUrl);
       audio.crossOrigin = "anonymous";
       audio.src = u;
-      return;
+      return actualLevel;
     } catch (e) { /* 直连兜底 */ }
   }
   audio.crossOrigin = null;
   audio.src = rawUrl;
+  return actualLevel;
 }
 
 /* ==================== 播放核心 ==================== */
@@ -910,9 +958,12 @@ function loadTrack(i) {
   state.seekable = !!t.outer;
   resetSongStats(); fluxHist = [];
   window.cmLog && window.cmLog("LOAD name=" + t.name + " src=" + String(t.outer || t.url || t.url_resolved).slice(0, 100));
-  setAudioSrc(t).then(() => {
+  setAudioSrc(t).then((lv) => {
     audio.volume = state.vol;
     audio.play().catch(() => {});
+    /* 音质徽标: 实际命中档位(可能与偏好不同——降级时会提示) */
+    const badge = lv ? " <span style='color:var(--accent);font-size:10px'>[" + esc(qualityLabel(lv)) + "]</span>" : "";
+    $("np-line").innerHTML = "<b>" + esc(t.name) + "</b> — " + esc(t.artist || t.country || "") + badge;
   });
   document.querySelectorAll(".row").forEach(el => el.classList.remove("on"));
   const rows = document.querySelectorAll("#out .row");
@@ -954,6 +1005,23 @@ const DEMO_TRACKS = [
   { id: 288820, name: "结尾曲 - 友谊地久天长 (Live)", artist: "群星", album: "歌手", src: "netease", outer: "https://music.163.com/song/media/outer/url?id=288820.mp3" },
 ];
 async function neteaseSearch(q) {
+  /* 主通道: Rust weapi cloudsearch(网易客户端同款排序, 带热度/VIP/时长字段, 接近原生搜索效果) */
+  if (window.__CM_IS_TAURI__) {
+    try {
+      const list = await cmInvoke("netease_search", { kw: q, limit: 30 });
+      if (list && list.length) {
+        window.cmLog && window.cmLog("SEARCH cloudsearch count=" + list.length);
+        return list.map(s => ({
+          id: s.id, name: s.name, artist: s.artist, album: s.album, src: "netease",
+          pop: s.pop || 0, fee: s.fee || 0, dt: s.dt || 0,
+          outer: "https://music.163.com/song/media/outer/url?id=" + s.id + ".mp3",
+        }));
+      }
+    } catch (e) {
+      window.cmLog && window.cmLog("SEARCH cloudsearch err " + (e && e.message || e));
+    }
+  }
+  /* 兜底: 旧 GET 接口(浏览器预览 / cloudsearch 异常时) */
   try {
     const r = await fetch("https://music.163.com/api/search/get?s=" + encodeURIComponent(q) + "&type=1&limit=25", { signal: AbortSignal.timeout(6000) });
     const d = await r.json();
@@ -989,17 +1057,59 @@ async function qqSearch(q) {
     }));
   } catch (e) { return []; }
 }
+/* ===== 原生级相关度排序 =====
+   目标: 接近网易/QQ 原生搜索——精确匹配与官方版本靠前, 翻唱/Live/伴奏靠后(除非用户明确要),
+   热度(pop)参与加权, 服务端原始顺序作为微弱 tie-break(原生排序本身有参考价值)。 */
+function normText(s) {
+  return (s || "").toLowerCase()
+    .replace(/[\s·・・,，.。!！?？~～\-—_()（）\[\]【】「」'"]+/g, "");
+}
+const VARIANT_RE = /(live|现场|翻唱|cover|伴奏|instrumental|dj|remix|混音|纯音乐|剪辑|片段|变速|降调|升调|0\.8|1\.1x|1\.2x|慢速|加速版|抖音|铃声)/i;
 function fuzzyScore(needle, hay) {
-  const n = needle.toLowerCase().replace(/\s+/g, ""), h = hay.toLowerCase();
+  const n = normText(needle), h = normText(hay);
   if (!n) return 0;
   if (h.includes(n)) return 100 + (h.startsWith(n) ? 20 : 0) - Math.min(30, h.indexOf(n));
   let i = 0;
   for (const ch of h) { if (ch === n[i]) i++; if (i >= n.length) break; }
   return i >= n.length ? 40 - (h.length - n.length) * 0.1 : -1;
 }
+function relevanceScore(q, s, serverIdx) {
+  const qn = normText(q);
+  const nm = normText(s.name), ar = normText(s.artist);
+  /* 用户明确要找变体(live/翻唱等)时, 不再惩罚变体曲 */
+  const wantVariant = VARIANT_RE.test(q);
+  let v = 0;
+  /* 歌名匹配(权重最高) */
+  if (nm === qn) v += 160;
+  else if (nm.startsWith(qn)) v += 90;
+  else if (nm.includes(qn)) v += 55 - Math.min(25, nm.indexOf(qn));
+  else {
+    /* 歌名不含查询串时, 看是不是「歌手+歌名」组合查询 */
+    const f = fuzzyScore(q, s.name + " " + s.artist);
+    if (f < 0) return -1;
+    v += Math.min(f, 35);
+  }
+  /* 歌手匹配 */
+  if (ar) {
+    if (ar === qn) v += 70;
+    else if (ar.includes(qn)) v += 35;
+    else {
+      /* 查询串里含歌手名(如「晴天 周杰伦」): 拆词双向命中加权 */
+      const parts = q.toLowerCase().split(/[\s,，]+/).filter(Boolean);
+      if (parts.length > 1 && parts.some(p => normText(p) && ar.includes(normText(p)))) v += 45;
+    }
+  }
+  /* 官方版本优先: 查询未带变体词时, Live/翻唱/伴奏等降权 */
+  if (!wantVariant && VARIANT_RE.test(s.name + " " + (s.album || ""))) v -= 70;
+  /* 热度加权(cloudsearch 提供 pop 0~100) */
+  if (s.pop) v += Math.min(30, s.pop * 0.3);
+  /* 服务端原生顺序 tie-break: 每后退一名 -0.8 */
+  v -= serverIdx * 0.8;
+  return v;
+}
 function rankByRelevance(q, list) {
   return list
-    .map(s => ({ s, v: Math.max(fuzzyScore(q, s.name + " " + s.artist), fuzzyScore(q, s.artist + " " + s.name)) }))
+    .map((s, i) => ({ s, v: relevanceScore(q, s, i) }))
     .filter(x => x.v >= 0)
     .sort((a, b) => b.v - a.v)
     .map(x => x.s);
@@ -1007,7 +1117,15 @@ function rankByRelevance(q, list) {
 function renderRows(list, isRadio) {
   document.querySelectorAll("#out .row").forEach(el => el.remove());
   list.forEach((t, i) => {
-    const tag = isRadio ? "● LIVE" : (t.src === "qq" ? "QQ·需登录" : "网易 MP3");
+    let tag;
+    if (isRadio) tag = "● LIVE";
+    else if (t.src === "qq") tag = "QQ·需登录";
+    else {
+      /* 原生风格标记: VIP/付费/试听 + 时长 */
+      const feeTag = t.fee === 1 ? "VIP " : t.fee === 4 ? "付费 " : t.fee === 8 ? "试听 " : "";
+      const dur = t.dt ? " " + fmt(t.dt / 1000) : "";
+      tag = "网易 " + feeTag + "MP3" + dur;
+    }
     const d = document.createElement("div");
     d.className = "row"; d.dataset.i = i;
     d.innerHTML = '<span class="idx">' + String(i+1).padStart(2,"0") + '</span><span class="nm">' + esc(t.name) + '</span><span class="ar">' + esc(t.artist || "") + '</span><span class="tg' + (isRadio ? " live" : "") + '">' + tag + '</span>';
@@ -1148,13 +1266,26 @@ function execCmd(raw) {
       else cmSay("用法: mood auto|欢快|平静|忧郁|高潮", 3200, true);
       break;
     }
-    case "lyric":
+    case "lyric": {
+      if (arg.startsWith("offset")) {
+        const v = parseFloat(arg.slice(6));
+        if (!isNaN(v)) {
+          lrcUserOffset = Math.max(-5, Math.min(5, v));
+          try { localStorage.setItem("cm_lrc_offset", String(lrcUserOffset)); } catch (e) {}
+          lrcShown = -1; syncLrc();
+          echo("<span class='p'>⏺</span> 歌词偏移已设为 <b>" + (lrcUserOffset >= 0 ? "+" : "") + lrcUserOffset.toFixed(2) + "s</b>（正=提前/负=延后，已保存）", "ok");
+        } else {
+          echo("<span class='p'>歌词偏移</span> 当前: " + (lrcUserOffset >= 0 ? "+" : "") + lrcUserOffset.toFixed(2) + "s（用法: lyric offset <-5~5秒>）", "dim");
+        }
+        break;
+      }
       lyricMode = !(arg === "off");
       $("subtitle-layer").style.display = lyricMode ? "" : "none";
       if (!lyricMode) stopLyrics();
       else if (state.queue[state.cur]) loadLyrics(state.queue[state.cur]);
       cmSay("字幕已" + (lyricMode ? "开启" : "关闭"), 2600, true);
       break;
+    }
     case "ff": {
       const n = parseFloat(arg) || 10;
       if (state.seekable && audio.duration) { audio.currentTime = Math.min(audio.duration, audio.currentTime + n); cmWalkTo($("progress-widget"), "快进 " + n + " 秒"); }
@@ -1174,10 +1305,30 @@ function execCmd(raw) {
       cmWalkTo($("btn-speed"), "倍速 " + SPEED_LABELS[speedIdx]);
       break;
     }
+    case "quality": {
+      if (!arg) {
+        const cur = QUALITIES.find(q => q.key === qualityKey);
+        echo("<span class='p'>音质</span> 当前: <b>" + cur.label + "</b>" + (cmLoggedIn ? "" : "（未登录，仅登录后生效）"), "dim");
+        echo("可用档位: " + QUALITIES.map(q => q.key + (q.vip ? "(VIP)" : "")).join(" · ") + " — 用法: quality <档位>", "dim");
+        break;
+      }
+      const q = QUALITIES.find(x => x.key === arg.toLowerCase());
+      if (!q) { cmSay("可用档位: " + QUALITIES.map(x => x.key).join(" / "), 3200, true); break; }
+      if (q.vip && !cmLoggedIn) {
+        echo("<span class='p'>⏺</span> 「" + q.label + "」需要网易云 VIP/SVIP，请先 login", "err");
+        cmSay("这档要会员，登录后再切", 3200, true);
+        break;
+      }
+      qualityKey = q.key;
+      try { localStorage.setItem("cm_quality", qualityKey); } catch (e) {}
+      echo("<span class='p'>⏺</span> 音质已切换为 <b>" + q.label + "</b>（下一首起生效）", "ok");
+      cmSay("音质 → " + q.label, 2600, true);
+      break;
+    }
     case "demo": state.queue = DEMO_TRACKS.slice(); renderRows(DEMO_TRACKS, false); loadTrack(0); break;
     case "diag": doDiag(); break;
     case "help":
-      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · mood auto|欢快|平静|忧郁|高潮 · lyric on|off · login [cookie 值] · logout · my · playlist &lt;url|id&gt; · demo · diag · clear", "dim"); break;
+      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · quality [standard|exhigh|lossless|hires|jymaster] · mood auto|欢快|平静|忧郁|高潮 · lyric on|off|offset ±秒 · login [cookie 值] · logout · my · playlist &lt;url|id&gt; · demo · diag · clear", "dim"); break;
     case "clear":
       document.querySelectorAll("#out > .ln, #out > .row").forEach(el => el.remove());
       break;
