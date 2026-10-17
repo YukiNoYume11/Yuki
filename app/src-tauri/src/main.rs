@@ -806,12 +806,9 @@ fn netease_song_url(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, 
                     &app,
                     &format!("SONGURL eapi id={id} level={level} code={} host={} jdymusic={} urlLen={}", j["code"].as_i64().unwrap_or(-1), host, jd, url.len()),
                 );
-                if !jd {
-                    return Ok(url);
-                }
-                if fallback.is_empty() {
-                    fallback = url;
-                }
+                // eapi(客户端身份)取得的直链均已授权可播——即便是 jdymusic 路径(实测 206 audio/mpeg)。
+                // 故命中首个非空直链即返回, 不再逐档试探(省去 ~400ms 延迟)。
+                return Ok(url);
             }
             Err(e) => log_msg(&app, &format!("SONGURL eapi id={id} level={level} err={e}")),
         }

@@ -561,16 +561,16 @@ function classify(rms, centroid, onsets) {
   } else {
     const rel = (rms - st.min) / (st.max - st.min + 1e-6); // 0~1 歌内相对能量
     const avg = st.sum / st.n;
-    // 变色阈值已整体下调: 更低能量即切换情绪/字体色, 观感更灵动
-    if (rel > 0.68 && onsets > 2) key = "peak";
-    else if (rel > 0.42 || rms > avg * 1.2) key = "excited";
-    else if (rel < 0.32 && centroid < 0.28) key = "melancholy";
+    // 变色阈值二次下调(更灵敏): peak 0.55/excited 0.32/melancholy 0.42, 稳定窗 1200ms, 更低能量即切换字幕配色
+    if (rel > 0.55 && onsets > 1) key = "peak";
+    else if (rel > 0.32 || rms > avg * 1.1) key = "excited";
+    else if (rel < 0.42 && centroid < 0.34) key = "melancholy";
     else key = "calm";
   }
   if (key === moodCur) { moodCand = null; return; }
   if (!moodAuto) return;
   if (key !== moodCand) { moodCand = key; moodCandSince = Date.now(); }
-  else if (Date.now() - moodCandSince > 1800) { setMood(key); moodCand = null; }
+  else if (Date.now() - moodCandSince > 1200) { setMood(key); moodCand = null; }
 }
 function drawEQ(fq) {
   /* 对数分组: 低频细划分、高频粗划分, 呈现真实频谱能量分布 */
