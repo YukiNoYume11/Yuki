@@ -988,10 +988,10 @@ async function setAudioSrc(t) {
       }
     } catch (e) {}
   }
-  /* QQ 取链(vkey): 登录后 VIP 曲可播, 同样按音质偏好降级 */
+  /* QQ 取链(vkey): 登录后 VIP 曲可播, 同样按音质偏好降级; mediaMid(strMediaMid)提高文件名命中率 */
   if (qqLoggedIn && t.src === "qq" && t.mid) {
     try {
-      const r = await cmInvoke("qq_song_url", { mid: t.mid, level: qualityKey });
+      const r = await cmInvoke("qq_song_url", { mid: t.mid, level: qualityKey, mediaMid: t.mediaMid || null });
       if (r && r.url) {
         rawUrl = r.url;
         actualLevel = r.level || null;

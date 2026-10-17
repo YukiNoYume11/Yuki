@@ -967,13 +967,18 @@ fn qq_fcg_get(path: &str, query: &[(&str, String)], cookie: &str) -> Result<serd
     serde_json::from_str(&text).map_err(|e| format!("fcg json 解析失败: {e} body={}", &text[..text.len().min(200)]))
 }
 
-/// POST u.y.qq.com musicu.fcg(统一网关)
+/// 调 u.y.qq.com musicu.fcg(统一网关)。
+/// 注意: POST 表单带 data 会被网关拒(500001), 必须用 GET + 完整 query 参数(实测验证)
 fn qq_musicu(cookie: &str, body: serde_json::Value) -> Result<serde_json::Value, String> {
+    let (uin, _) = qq_parse_cookie(cookie);
+    let url = format!(
+        "https://u.y.qq.com/cgi-bin/musicu.fcg?-=getplaysongvkey&g_tk=5381&loginUin={uin}&hostUin=0&format=json&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq.json&needNewCode=0&data={}",
+        urlencoding::encode(&body.to_string())
+    );
     let resp = get_client()
-        .post("https://u.y.qq.com/cgi-bin/musicu.fcg")
+        .get(url)
         .header("Referer", "https://y.qq.com/")
         .header("Cookie", cookie)
-        .form(&[("data", body.to_string())])
         .send()
         .map_err(|e| e.to_string())?;
     let text = resp.text().map_err(|e| e.to_string())?;
@@ -1133,10 +1138,11 @@ fn qq_playlist_detail(app: tauri::AppHandle, state: tauri::State<'_, QqState>, i
     )?;
     let songs = j["cdlist"][0]["songlist"].as_array().cloned().unwrap_or_default();
     log_msg(&app, &format!("QPLAYLIST detail id={id} tracks={}", songs.len()));
+    // 字段名以 Node 探针实测为准: songmid/songname/albumname/strMediaMid/songid
     let list: Vec<serde_json::Value> = songs
         .into_iter()
         .filter_map(|t| {
-            let mid = t["mid"].as_str()?.to_string();
+            let mid = t["songmid"].as_str().or_else(|| t["mid"].as_str())?.to_string();
             let artist = t["singer"]
                 .as_array()
                 .map(|ar| {
@@ -1148,10 +1154,11 @@ fn qq_playlist_detail(app: tauri::AppHandle, state: tauri::State<'_, QqState>, i
                 .unwrap_or_default();
             Some(serde_json::json!({
                 "mid": mid,
-                "id": t["id"],
-                "name": t["name"],
+                "mediaMid": t["strMediaMid"].as_str().unwrap_or(""),
+                "id": t["songid"].as_i64().or_else(|| t["id"].as_i64()).unwrap_or(0),
+                "name": t["songname"].as_str().or_else(|| t["name"].as_str()).unwrap_or("未知曲目"),
                 "artist": artist,
-                "album": t["album"]["name"],
+                "album": t["albumname"].as_str().or_else(|| t["album"]["name"].as_str()).unwrap_or(""),
                 "dt": t["interval"].as_i64().unwrap_or(0) * 1000,
                 "src": "qq",
             }))
@@ -1161,11 +1168,12 @@ fn qq_playlist_detail(app: tauri::AppHandle, state: tauri::State<'_, QqState>, i
 }
 
 /// QQ 取链: vkey.GetVkeyServer, 按音质偏好给候选文件名, 命中首个非空 purl
-/// filename 格式: 前缀+songmid+media_mid+扩展名(media_mid 未知时等于 songmid; 两种写法都试)
+/// filename = 前缀+songmid+media_mid+扩展名(strMediaMid 由歌单详情提供; 缺失时退化为 songmid)
 #[tauri::command]
-fn qq_song_url(app: tauri::AppHandle, state: tauri::State<'_, QqState>, mid: String, level: Option<String>) -> Result<serde_json::Value, String> {
+fn qq_song_url(app: tauri::AppHandle, state: tauri::State<'_, QqState>, mid: String, level: Option<String>, media_mid: Option<String>) -> Result<serde_json::Value, String> {
     let info = qq_info(&state).ok_or("QQ 未登录")?;
     let want = level.unwrap_or_else(|| "exhigh".into());
+    let mm = media_mid.filter(|s| !s.is_empty()).unwrap_or_else(|| mid.clone());
     // (文件名前缀, 扩展名, 对应音质档位)
     let cands: Vec<(&str, &str, &str)> = match want.as_str() {
         "standard" => vec![("M500", ".mp3", "standard"), ("C400", ".m4a", "standard")],
@@ -1179,8 +1187,8 @@ fn qq_song_url(app: tauri::AppHandle, state: tauri::State<'_, QqState>, mid: Str
     let mut filenames: Vec<String> = Vec::new();
     let mut tags: Vec<&str> = Vec::new();
     for (pre, ext, lv) in &cands {
-        filenames.push(format!("{pre}{mid}{mid}{ext}")); // media_mid=songmid 的完整写法
-        filenames.push(format!("{pre}{mid}{ext}"));       // 兼容单 mid 写法
+        filenames.push(format!("{pre}{mid}{mm}{ext}")); // 标准写法 songmid+strMediaMid
+        filenames.push(format!("{pre}{mid}{mid}{ext}")); // 兼容 media_mid=songmid
         tags.push(lv);
         tags.push(lv);
     }
