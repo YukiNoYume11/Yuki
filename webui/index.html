@@ -857,7 +857,7 @@ let qqPlaylists = [], cmPlaylists = [];
 async function qqLogin(c) {
   c = (c || "").trim();
   if (!c) { cmSay("请先粘贴 Cookie", 2600, true); return; }
-  if (!/uin|wxuin/.test(c)) { echo("<span class='p'>⏺</span> Cookie 里没找到 uin/wxuin，请从 y.qq.com 复制完整 Cookie", "err"); return; }
+  if (!/=/i.test(c)) { echo("<span class='p'>⏺</span> 这不像一段 Cookie（没有键值对），请复制完整", "err"); return; }
   echo("<span class='p'>⏺</span> 正在登录 QQ 音乐…", "dim");
   try {
     const prof = await cmInvoke("qq_set_cookie", { cookie: c });
@@ -1482,8 +1482,8 @@ function execCmd(raw) {
       if (qqLoggedIn && !arg) { echo("<span class='p'>QQ</span> 已登录: <b>" + esc(qqNick || qqUin) + "</b>（qlogout 退出）", "dim"); break; }
       const c = arg.startsWith("cookie ") ? arg.slice(7) : arg;
       if (c) { qqLogin(c); break; }
-      echo("<span class='p'>qlogin</span> 导入 QQ 账号：浏览器打开 <b>y.qq.com</b> 登录 → F12 → Application → Cookies → 复制整段 Cookie → <b>qlogin &lt;cookie&gt;</b>", "dim");
-      echo("<span class='p'>提示</span> 登录后可播 VIP 曲目（需绿钻账号）并在侧边栏显示 QQ 歌单", "dim");
+      echo("<span class='p'>qlogin</span> 导入 QQ 账号：浏览器打开 <b>y.qq.com</b> 登录 → F12 → <b>Network</b> → 刷新页面 → 点任一 y.qq.com 请求 → Headers → 复制 <b>Cookie:</b> 整行的值 → <b>qlogin &lt;cookie&gt;</b>", "dim");
+      echo("<span class='p'>提示</span> 不要从 Console 的 document.cookie 复制（拿不到 HttpOnly 的 uin/qqmusic_key）。登录后可播 VIP 曲目并在侧边栏显示 QQ 歌单", "dim");
       break;
     }
     case "qlogout": qqDoLogout(); break;

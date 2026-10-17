@@ -919,21 +919,32 @@ fn qq_info(state: &tauri::State<'_, QqState>) -> Option<QqInfo> {
 }
 
 /// 解析 QQ cookie 串: 返回 (uin, qqmusic_key)
+/// 容错: 允许带 "Cookie:" 前缀(Network 面板整行复制)/键名空白; uin 按 login_type 与多键名兜底
 fn qq_parse_cookie(cookie: &str) -> (String, String) {
+    let mut c = cookie.trim();
+    // 剥离 "Cookie:" 前缀(从 Network 面板连 header 名一起复制的情况)
+    if c.len() > 7 && c[..7].eq_ignore_ascii_case("cookie:") {
+        c = c[7..].trim();
+    }
     let mut map = std::collections::HashMap::new();
-    for kv in cookie.split(';') {
+    for kv in c.split(';') {
         let kv = kv.trim();
         if let Some(eq) = kv.find('=') {
-            map.insert(kv[..eq].trim().to_string(), kv[eq + 1..].trim().to_string());
+            map.insert(kv[..eq].trim().to_lowercase(), kv[eq + 1..].trim().to_string());
         }
     }
+    let digits = |s: &str| -> String { s.chars().filter(|c| c.is_ascii_digit()).collect() };
     let login_type = map.get("login_type").map(|s| s.as_str()).unwrap_or("");
     let raw_uin = if login_type == "2" {
         map.get("wxuin").cloned().unwrap_or_default()
     } else {
-        map.get("uin").cloned().unwrap_or_default()
+        // 依次兜底: uin → p_uin → wxuin
+        ["uin", "p_uin", "wxuin"]
+            .iter()
+            .find_map(|k| map.get(*k).cloned())
+            .unwrap_or_default()
     };
-    let uin: String = raw_uin.chars().filter(|c| c.is_ascii_digit()).collect();
+    let uin = digits(&raw_uin);
     let key = map
         .get("qqmusic_key")
         .or_else(|| map.get("qm_keyst"))
@@ -999,7 +1010,20 @@ fn qq_set_cookie(app: tauri::AppHandle, state: tauri::State<'_, QqState>, cookie
     }
     let (uin, key) = qq_parse_cookie(&cookie);
     if uin.is_empty() {
-        return Err("cookie 中未找到 uin/wxuin".into());
+        // 列出识别到的键名(不记值), 便于用户自查是否复制完整
+        let keys: Vec<String> = cookie
+            .split(';')
+            .filter_map(|kv| kv.split('=').next())
+            .map(|k| k.trim().trim_start_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_').to_string())
+            .filter(|k| !k.is_empty())
+            .take(20)
+            .collect();
+        log_msg(&app, &format!("QLOGIN uin 未识别, keys={:?}", keys));
+        return Err(format!(
+            "未找到 uin/wxuin（识别到 {} 个键: {}）。请用 F12→Network→任一 y.qq.com 请求→Headers→Cookie 整行复制（document.cookie 拿不到 HttpOnly 的 uin）",
+            keys.len(),
+            keys.join(", ")
+        ));
     }
     log_msg(&app, &format!("QLOGIN set_cookie uin={uin} keyLen={}", key.len()));
     let j = qq_fetch_created(&cookie, &uin).map_err(|e| format!("校验失败: {e}"))?;
