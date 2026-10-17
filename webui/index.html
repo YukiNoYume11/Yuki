@@ -262,6 +262,27 @@
   html[data-theme="light"] .titlebar { background: #F0EDE7; }
   html[data-theme="light"] #sidebar { background: var(--panel); }
   html[data-theme="light"] .btn.main { color: #FBFAF7; }
+
+  /* ===== 主题: transfish(跨性别旗 × 鱼板) =====
+     配色取自跨性别旗: 粉 #F5A9B8 / 蓝 #5BCEFA / 白; 鱼板漩涡🍥为吉祥物。
+     本块刻意置于 mood 覆盖规则之后(同优先级后者胜)——情绪引擎照常运行但不改本主题色, 风格完全独立 */
+  html[data-theme="transfish"] {
+    --bg: #FDF6F9; --win: #FFFFFF; --panel: #FBF1F5; --panel2: #F7E8EF;
+    --border: #F0D3E0; --text: #42303B; --dim: #97708A; --faint: #C2A4B6;
+    --accent: #E87A9C; --accent-dim: #D45C84; --accent-dark: #B8486E;
+    --k1: #E87A9C; --k2: #4FB8E8; --k3: #9B8AC4; --ok: #4FB8E8;
+  }
+  html[data-theme="transfish"] body { background: #FDF0F5; }
+  html[data-theme="transfish"] .term { border-color: #EFC9DA; border-radius: 16px; }
+  html[data-theme="transfish"] .titlebar { background: #FBF1F5; }
+  html[data-theme="transfish"] #sidebar { background: var(--panel); }
+  html[data-theme="transfish"] .btn.main { color: #fff; }
+  html[data-theme="transfish"] .cmdline .p { color: var(--accent); }
+  /* 隐藏 Claude 像素螃蟹形象(欢迎页 + 浮动层), 换鱼板 */
+  html[data-theme="transfish"] .mini-mascot { display: none; }
+  html[data-theme="transfish"] #cm-mascot svg { display: none; }
+  html[data-theme="transfish"] #cm-mascot::before { content: "🍥"; font-size: 34px; line-height: 1; display: block; filter: drop-shadow(0 2px 4px rgba(232,122,156,.4)); }
+  html[data-theme="transfish"] .mini-fish { display: inline-flex !important; }
 </style>
 </head>
 <body>
@@ -312,6 +333,7 @@
           <g fill="#B85C3D"><rect x="6" y="12" width="2.4" height="2.6"/><rect x="11.6" y="12" width="2.4" height="2.6"/></g>
         </svg>
       </span>
+      <span class="mini-fish" style="display:none;font-size:44px;line-height:1;filter:drop-shadow(0 2px 6px rgba(232,122,156,.45))">🍥</span>
       <div>
         <h1>ClaudeMusic</h1>
         <div class="meta">Claude code·小梦想睡觉</div>
@@ -1516,10 +1538,20 @@ async function execCmd(raw) {
       cmSay("音质 → " + q.label, 2600, true);
       break;
     }
+    case "theme": {
+      if (!arg) {
+        echo("<span class='p'>主题</span> 当前: <b>" + esc(THEMES.find(t => t.key === themeCur).label) + "</b>；可用: " + THEMES.map(t => t.key).join(" / ") + "（或点侧栏 ◐ 循环切换）", "dim");
+        break;
+      }
+      if (setTheme(arg.toLowerCase())) {
+        echo("<span class='p'>◐</span> 主题 → <b>" + esc(THEMES.find(t => t.key === themeCur).label) + "</b>", "ok");
+      } else cmSay("可用主题: " + THEMES.map(t => t.key).join(" / "), 3200, true);
+      break;
+    }
     case "demo": state.queue = DEMO_TRACKS.slice(); renderRows(DEMO_TRACKS, false); loadTrack(0); break;
     case "diag": doDiag(); break;
     case "help":
-      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · quality [standard|exhigh|lossless|hires|jymaster] · mood auto|欢快|平静|忧郁|高潮 · lyric on|off|offset ±秒 · login [cookie 值] · logout · qlogin &lt;cookie&gt; · qlogout · qmy · my · playlist &lt;url|id&gt; · demo · diag · clear", "dim"); break;
+      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · quality [standard|exhigh|lossless|hires|jymaster] · theme [dark|light|transfish] · mood auto|欢快|平静|忧郁|高潮 · lyric on|off|offset ±秒 · login [cookie 值] · logout · qlogin &lt;cookie&gt; · qlogout · qmy · my · playlist &lt;url|id&gt; · demo · diag · clear", "dim"); break;
     case "clear":
       document.querySelectorAll("#out > .ln, #out > .row").forEach(el => el.remove());
       break;
@@ -1642,16 +1674,28 @@ $("pl-input").addEventListener("keydown", (e) => {
 });
 $("sb-toggle").addEventListener("click", () => document.body.classList.toggle("sb-collapsed"));
 
-/* ===== 主题切换(预留 DIY 入口): dark/light 循环, localStorage 持久化 ===== */
+/* ===== 主题切换(DIY 入口): dark/light/transfish 循环, localStorage 持久化 ===== */
+const THEMES = [
+  { key: "dark", label: "暗色（Claude 终端）" },
+  { key: "light", label: "浅色" },
+  { key: "transfish", label: "跨性别旗·鱼板 🍥" },
+];
 let themeCur = localStorage.getItem("cm_theme") || "dark";
+if (!THEMES.some(t => t.key === themeCur)) themeCur = "dark";
 function applyTheme() { document.documentElement.dataset.theme = themeCur; }
 applyTheme();
-$("btn-theme").addEventListener("click", () => {
-  themeCur = themeCur === "dark" ? "light" : "dark";
-  try { localStorage.setItem("cm_theme", themeCur); } catch (e) {}
+function setTheme(key) {
+  if (!THEMES.some(t => t.key === key)) return false;
+  themeCur = key;
+  try { localStorage.setItem("cm_theme", key); } catch (e) {}
   applyTheme();
-  cmSay(themeCur === "light" ? "浅色主题" : "暗色主题", 2200, true);
-  echo("<span class='p'>◐</span> 主题 → " + themeCur + "（主题 DIY 入口已预留，后续可在此扩展自定义配色）", "dim");
+  return true;
+}
+$("btn-theme").addEventListener("click", () => {
+  const next = THEMES[(THEMES.findIndex(t => t.key === themeCur) + 1) % THEMES.length];
+  setTheme(next.key);
+  cmSay("主题 → " + next.label, 2400, true);
+  echo("<span class='p'>◐</span> 主题 → <b>" + esc(next.label) + "</b>（也可用 theme " + THEMES.map(t => t.key).join("/") + " 直接切换）", "dim");
 });
 
 /* 启动时恢复登录态(网易云 + QQ) */
