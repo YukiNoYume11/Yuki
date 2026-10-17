@@ -126,6 +126,15 @@ fn handle_proxy(app: tauri::AppHandle, target: String, range: Option<String>) ->
     // 网易 CDN(m70x/m80x.music.126.net)对 VIP 音频有防盗链: 需浏览器 UA(get_client 已设)+ Referer, 否则 403
     if target.contains("126.net") || target.contains("163.com") {
         req = req.header("Referer", "https://music.163.com/");
+        // 关键: 网易 VIP 直链与会话绑定——不带登录 Cookie 取流会返回 text/plain 防盗链页(非音频)。
+        // 这里把进程内登录态的 Cookie 透传给网易自家 CDN(同信任域, 用户本人账号, 不泄漏第三方)。
+        if let Some(st) = app.try_state::<LoginState>() {
+            if let Ok(g) = st.inner().0.lock() {
+                if let Some(info) = g.as_ref() {
+                    req = req.header("Cookie", info.cookie.as_str());
+                }
+            }
+        }
     }
     // 转发 Range 头 → 上游返回 206 分段, 音频 seek 才能正常工作
     if let Some(r) = &range {
@@ -150,10 +159,20 @@ fn handle_proxy(app: tauri::AppHandle, target: String, range: Option<String>) ->
             let _ = resp.take(MAX_BODY).read_to_end(&mut buf);
             // 音频 CDN 探针: 记录状态/类型/字节数, 排障 VIP 播放(403/格式错误)必读
             if target.contains("126.net") || target.contains("163.com") {
-                log_msg(
-                    &app,
-                    &format!("PROXY music status={status} ct={ct} bytes={} url={}", buf.len(), &target[..target.len().min(90)]),
+                let mut line = format!(
+                    "PROXY music status={status} ct={ct} bytes={} url={}",
+                    buf.len(),
+                    &target[..target.len().min(90)]
                 );
+                // 正常音频为数 MB 的 audio/mpeg; 若响应很小则是防盗链/错误文本, dump 前 300 字定位
+                if buf.len() < 100_000 {
+                    let preview: String = String::from_utf8_lossy(&buf[..buf.len().min(300)])
+                        .chars()
+                        .filter(|c| !c.is_control())
+                        .collect();
+                    line.push_str(&format!(" body={preview}"));
+                }
+                log_msg(&app, &line);
             }
             // 注意: 不转发上游 Content-Length —— take(MAX_BODY) 截断后会与实际字节不符,
             // Tauri 会按 buf 实际长度自动设置
