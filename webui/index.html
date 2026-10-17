@@ -10,6 +10,8 @@
     --border: #3A3833; --text: #E8E6E3; --dim: #9C9993; --faint: #6B6963;
     --accent: #D97757; --accent-dim: #B85C3D; --accent-dark: #8F4527;
     --k1: #E8A87C; --k2: #E86A5E; --k3: #9AB8D8; --ok: #7BAE7F;
+    /* 字幕/频谱条带背景与字幕阴影(按主题覆盖) */
+    --strip1: rgba(18,16,14,.95); --strip2: rgba(18,16,14,0); --subshadow: rgba(0,0,0,.7);
     --mono: ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace;
   }
   html[data-mood="excited"] { --accent: #E8825C; --k2: #FF6B4A; }
@@ -72,7 +74,7 @@
   .viz-strip {
     flex-shrink: 0; position: relative; height: 118px; overflow: hidden;
     border-top: 1px solid var(--border);
-    background: linear-gradient(to top, rgba(18,16,14,.95) 45%, rgba(18,16,14,0));
+    background: linear-gradient(to top, var(--strip1) 45%, var(--strip2));
   }
   .eq { position: absolute; left: 0; right: 0; bottom: 0; height: 100%; display: flex; align-items: flex-end; gap: 3px; opacity: .75; pointer-events: none; z-index: 1; }
   .eq i { flex: 1; background: var(--accent); border-radius: 1px 1px 0 0; height: 6%; min-width: 2px; transition: height .07s linear; }
@@ -85,7 +87,7 @@
   }
   #subtitle-text {
     font-size: 27px; font-weight: 500; letter-spacing: 2px; text-align: center;
-    color: var(--text); text-shadow: 0 2px 8px rgba(0,0,0,.7); line-height: 1.45;
+    color: var(--text); text-shadow: 0 2px 8px var(--subshadow); line-height: 1.45;
   }
   #subtitle-text .k1 { color: var(--k1); }
   #subtitle-text .k2 { color: var(--k2); }
@@ -250,27 +252,16 @@
   .qr-box svg { display: block; }
   .qr-status { color: var(--dim); font-size: 12px; text-align: center; min-height: 18px; }
 
-  /* ===== 主题体系(DIY 入口): 全部颜色走 CSS 变量, 新增主题=新增一组变量覆盖 ===== */
-  html[data-theme="light"] {
-    --bg: #F4F1EC; --win: #FBFAF7; --panel: #F0EDE7; --panel2: #E7E3DB;
-    --border: #D9D3C8; --text: #2B2825; --dim: #6E6860; --faint: #A39D93;
-    --accent: #C05F3C; --accent-dim: #A84E2E; --accent-dark: #8F4527;
-    --k1: #C07040; --k2: #C04538; --k3: #4A6E92; --ok: #4E8A52;
-  }
-  html[data-theme="light"] body { background: #EAE6DE; }
-  html[data-theme="light"] .term { border-color: #CFC9BD; }
-  html[data-theme="light"] .titlebar { background: #F0EDE7; }
-  html[data-theme="light"] #sidebar { background: var(--panel); }
-  html[data-theme="light"] .btn.main { color: #FBFAF7; }
-
   /* ===== 主题: transfish(跨性别旗 × 鱼板) =====
      配色取自跨性别旗: 粉 #F5A9B8 / 蓝 #5BCEFA / 白; 鱼板漩涡🍥为吉祥物。
      本块刻意置于 mood 覆盖规则之后(同优先级后者胜)——情绪引擎照常运行但不改本主题色, 风格完全独立 */
   html[data-theme="transfish"] {
     --bg: #FDF6F9; --win: #FFFFFF; --panel: #FBF1F5; --panel2: #F7E8EF;
-    --border: #F0D3E0; --text: #42303B; --dim: #97708A; --faint: #C2A4B6;
+    --border: #EDD3E0; --text: #42303B; --dim: #8E6E84; --faint: #BCA2B2;
     --accent: #E87A9C; --accent-dim: #D45C84; --accent-dark: #B8486E;
     --k1: #E87A9C; --k2: #4FB8E8; --k3: #9B8AC4; --ok: #4FB8E8;
+    /* 字幕条带: 粉白渐变, 字幕阴影用柔和粉 */
+    --strip1: rgba(255,243,248,.94); --strip2: rgba(255,243,248,0); --subshadow: rgba(232,122,156,.35);
   }
   html[data-theme="transfish"] body { background: #FDF0F5; }
   html[data-theme="transfish"] .term { border-color: #EFC9DA; border-radius: 16px; }
@@ -278,6 +269,13 @@
   html[data-theme="transfish"] #sidebar { background: var(--panel); }
   html[data-theme="transfish"] .btn.main { color: #fff; }
   html[data-theme="transfish"] .cmdline .p { color: var(--accent); }
+  /* 蓝色元素点缀: 时间/序号/分区标题/音质标签用旗蓝 */
+  html[data-theme="transfish"] .tm, html[data-theme="transfish"] .idx { color: #7AB8DC; }
+  html[data-theme="transfish"] .sb-sec { color: #5FA8D0; }
+  html[data-theme="transfish"] .qtag { color: #4FB8E8; border-color: #8FCDE9; }
+  html[data-theme="transfish"] .qtag.pending { color: var(--faint); border-color: var(--border); }
+  /* 频谱条粉蓝交替(旗色条纹) */
+  html[data-theme="transfish"] .eq i:nth-child(even) { background: #7CC7EE; }
   /* 隐藏 Claude 像素螃蟹形象(欢迎页 + 浮动层), 换鱼板 */
   html[data-theme="transfish"] .mini-mascot { display: none; }
   html[data-theme="transfish"] #cm-mascot svg { display: none; }
@@ -1551,7 +1549,7 @@ async function execCmd(raw) {
     case "demo": state.queue = DEMO_TRACKS.slice(); renderRows(DEMO_TRACKS, false); loadTrack(0); break;
     case "diag": doDiag(); break;
     case "help":
-      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · quality [standard|exhigh|lossless|hires|jymaster] · theme [dark|light|transfish] · mood auto|欢快|平静|忧郁|高潮 · lyric on|off|offset ±秒 · login [cookie 值] · logout · qlogin &lt;cookie&gt; · qlogout · qmy · my · playlist &lt;url|id&gt; · demo · diag · clear", "dim"); break;
+      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · quality [standard|exhigh|lossless|hires|jymaster] · theme [dark|transfish] · mood auto|欢快|平静|忧郁|高潮 · lyric on|off|offset ±秒 · login [cookie 值] · logout · qlogin &lt;cookie&gt; · qlogout · qmy · my · playlist &lt;url|id&gt; · demo · diag · clear", "dim"); break;
     case "clear":
       document.querySelectorAll("#out > .ln, #out > .row").forEach(el => el.remove());
       break;
@@ -1677,7 +1675,6 @@ $("sb-toggle").addEventListener("click", () => document.body.classList.toggle("s
 /* ===== 主题切换(DIY 入口): dark/light/transfish 循环, localStorage 持久化 ===== */
 const THEMES = [
   { key: "dark", label: "暗色（Claude 终端）" },
-  { key: "light", label: "浅色" },
   { key: "transfish", label: "跨性别旗·鱼板 🍥" },
 ];
 let themeCur = localStorage.getItem("cm_theme") || "dark";
