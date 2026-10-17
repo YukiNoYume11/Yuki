@@ -304,7 +304,7 @@
     </div>
 
     <div class="out" id="out">
-      <div class="ln dim">ClaudeMusic v0.5.0 — play 关键词 / quality 音质 / lyric offset 校准 / diag / help</div>
+      <div class="ln dim">ClaudeMusic v0.5.1 — play 关键词 / quality 音质 / lyric offset 校准 / diag / help</div>
     </div>
 
     <div class="viz-strip">
@@ -1005,45 +1005,47 @@ const DEMO_TRACKS = [
   { id: 288820, name: "结尾曲 - 友谊地久天长 (Live)", artist: "群星", album: "歌手", src: "netease", outer: "https://music.163.com/song/media/outer/url?id=288820.mp3" },
 ];
 async function neteaseSearch(q) {
-  /* 主通道: Rust weapi cloudsearch(网易客户端同款排序, 带热度/VIP/时长字段, 接近原生搜索效果) */
+  const out = [], seen = new Set();
+  const push = s => { if (s && s.id && !seen.has(s.id)) { seen.add(s.id); out.push(s); } };
+  const mkOuter = id => "https://music.163.com/song/media/outer/url?id=" + id + ".mp3";
+  const tasks = [];
+  /* 主通道: Rust weapi cloudsearch(官方同款排序, 带热度/VIP/时长/别名字段) */
   if (window.__CM_IS_TAURI__) {
-    try {
-      const list = await cmInvoke("netease_search", { kw: q, limit: 30 });
-      if (list && list.length) {
-        window.cmLog && window.cmLog("SEARCH cloudsearch count=" + list.length);
-        return list.map(s => ({
-          id: s.id, name: s.name, artist: s.artist, album: s.album, src: "netease",
-          pop: s.pop || 0, fee: s.fee || 0, dt: s.dt || 0,
-          outer: "https://music.163.com/song/media/outer/url?id=" + s.id + ".mp3",
-        }));
-      }
-    } catch (e) {
-      window.cmLog && window.cmLog("SEARCH cloudsearch err " + (e && e.message || e));
-    }
+    tasks.push(cmInvoke("netease_search", { kw: q, limit: 30 }).then(list => {
+      window.cmLog && window.cmLog("SEARCH cloudsearch count=" + ((list && list.length) || 0));
+      (list || []).forEach(s => push({
+        id: s.id, name: s.name, artist: s.artist, album: s.album, src: "netease",
+        pop: s.pop || 0, fee: s.fee || 0, dt: s.dt || 0, alia: s.alia || [],
+        outer: mkOuter(s.id),
+      }));
+    }).catch(e => window.cmLog && window.cmLog("SEARCH cloudsearch err " + (e && e.message || e))));
   }
-  /* 兜底: 旧 GET 接口(浏览器预览 / cloudsearch 异常时) */
-  try {
-    const r = await fetch("https://music.163.com/api/search/get?s=" + encodeURIComponent(q) + "&type=1&limit=25", { signal: AbortSignal.timeout(6000) });
-    const d = await r.json();
-    let songs = ((d.result && d.result.songs) || []).map(s => ({
-      id: s.id, name: s.name, src: "netease",
-      artist: (s.artists || []).map(a => a.name).join("/"),
-      album: s.album ? s.album.name : "",
-      outer: "https://music.163.com/song/media/outer/url?id=" + s.id + ".mp3",
-    }));
-    if (!songs.length) {
-      const r2 = await fetch("https://music.163.com/api/search/suggest/web?s=" + encodeURIComponent(q), { signal: AbortSignal.timeout(6000) });
-      const d2 = await r2.json();
-      songs = ((d2.result && d2.result.songs) || []).map(s => ({
+  /* 并行模糊通道: suggest 对拼写误差/组合查询更宽容, 与主通道合并去重 */
+  tasks.push(fetch("https://music.163.com/api/search/suggest/web?s=" + encodeURIComponent(q), { signal: AbortSignal.timeout(6000) })
+    .then(r => r.json()).then(d => {
+      (((d.result || {}).songs) || []).forEach(s => push({
         id: s.id, name: s.name, src: "netease",
         artist: (s.artists || []).map(a => a.name).join("/"),
-        album: s.album ? s.album.name : "",
-        outer: "https://music.163.com/song/media/outer/url?id=" + s.id + ".mp3",
+        album: s.album ? s.album.name : "", alia: s.alias || [],
+        outer: mkOuter(s.id),
       }));
-      if (songs.length) toastLike("精确匹配为空，已用模糊匹配 " + songs.length + " 首", "dim");
-    }
-    return songs;
-  } catch (e) { return null; }
+    }).catch(() => {}));
+  await Promise.all(tasks);
+  /* 浏览器预览或双通道皆空: 旧 GET 接口兜底 */
+  if (!out.length) {
+    try {
+      const r = await fetch("https://music.163.com/api/search/get?s=" + encodeURIComponent(q) + "&type=1&limit=25", { signal: AbortSignal.timeout(6000) });
+      const d = await r.json();
+      ((d.result && d.result.songs) || []).forEach(s => push({
+        id: s.id, name: s.name, src: "netease",
+        artist: (s.artists || []).map(a => a.name).join("/"),
+        album: s.album ? s.album.name : "", alia: s.alias || [],
+        outer: mkOuter(s.id),
+      }));
+      if (out.length) toastLike("精确匹配为空，已用模糊匹配 " + out.length + " 首", "dim");
+    } catch (e) {}
+  }
+  return out;
 }
 async function qqSearch(q) {
   try {
@@ -1057,14 +1059,59 @@ async function qqSearch(q) {
     }));
   } catch (e) { return []; }
 }
-/* ===== 原生级相关度排序 =====
-   目标: 接近网易/QQ 原生搜索——精确匹配与官方版本靠前, 翻唱/Live/伴奏靠后(除非用户明确要),
-   热度(pop)参与加权, 服务端原始顺序作为微弱 tie-break(原生排序本身有参考价值)。 */
+/* ===== 原生级相关度排序 v2 =====
+   核心: 分词跨字段匹配——「idol yoasobi」类查询中, 各词可分别命中歌名/歌手/别名,
+   双字段同时命中(歌名+歌手)大幅加权; 编辑距离(含相邻换位)容忍拼写误差(yoasabi→yoasobi)。 */
 function normText(s) {
-  return (s || "").toLowerCase()
+  return (s == null ? "" : String(s)).toLowerCase()
     .replace(/[\s·・・,，.。!！?？~～\-—_()（）\[\]【】「」'"]+/g, "");
 }
+function tokenizeQuery(q) {
+  return String(q).toLowerCase().split(/[\s,，、/]+/).map(normText).filter(Boolean);
+}
 const VARIANT_RE = /(live|现场|翻唱|cover|伴奏|instrumental|dj|remix|混音|纯音乐|剪辑|片段|变速|降调|升调|0\.8|1\.1x|1\.2x|慢速|加速版|抖音|铃声)/i;
+/* 带相邻换位的编辑距离(Damerau), max 以上提前截断返回 max+1 */
+function editDist(a, b, max) {
+  const la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > max) return max + 1;
+  let prev2 = null, prev = [];
+  for (let j = 0; j <= lb; j++) prev[j] = j;
+  for (let i = 1; i <= la; i++) {
+    const cur = [i];
+    let rowMin = cur[0];
+    for (let j = 1; j <= lb; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      if (prev2 && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        v = Math.min(v, prev2[j - 2] + 1);
+      }
+      cur[j] = v;
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > max) return max + 1;
+    prev2 = prev; prev = cur;
+  }
+  return prev[lb];
+}
+/* 单个查询词对一组候选字段(歌名+别名 / 各歌手名)的最佳匹配分 */
+function tokenFieldScore(tok, fields) {
+  let best = 0;
+  for (const f of fields) {
+    if (!f) continue;
+    if (f === tok) { best = Math.max(best, 100); continue; }
+    if (f.startsWith(tok)) { best = Math.max(best, 80); continue; }
+    const idx = f.indexOf(tok);
+    if (idx >= 0) { best = Math.max(best, 60 - Math.min(20, idx)); continue; }
+    if (f.length >= 3 && tok.includes(f)) { best = Math.max(best, 45); continue; }
+    /* 拼写容错: 长词允许 2 处误差, 短词 1 处 */
+    const maxD = tok.length >= 6 ? 2 : 1;
+    if (Math.abs(f.length - tok.length) <= maxD && tok.length >= 3) {
+      const d = editDist(tok, f, maxD);
+      if (d <= maxD) best = Math.max(best, 48 - d * 10);
+    }
+  }
+  return best;
+}
 function fuzzyScore(needle, hay) {
   const n = normText(needle), h = normText(hay);
   if (!n) return 0;
@@ -1075,35 +1122,46 @@ function fuzzyScore(needle, hay) {
 }
 function relevanceScore(q, s, serverIdx) {
   const qn = normText(q);
-  const nm = normText(s.name), ar = normText(s.artist);
-  /* 用户明确要找变体(live/翻唱等)时, 不再惩罚变体曲 */
+  const toks = tokenizeQuery(q);
+  const nameF = [s.name].concat(s.alia || []).map(normText).filter(Boolean);
+  const artF = String(s.artist || "").split("/").map(normText).filter(Boolean);
   const wantVariant = VARIANT_RE.test(q);
-  let v = 0;
-  /* 歌名匹配(权重最高) */
-  if (nm === qn) v += 160;
-  else if (nm.startsWith(qn)) v += 90;
-  else if (nm.includes(qn)) v += 55 - Math.min(25, nm.indexOf(qn));
-  else {
-    /* 歌名不含查询串时, 看是不是「歌手+歌名」组合查询 */
+  let v = 0, hitName = 0, hitArt = 0, miss = 0;
+
+  if (toks.length) {
+    /* 分词跨字段匹配: 每个词取其在歌名组/歌手组的最佳分 */
+    for (const tok of toks) {
+      const sn = tokenFieldScore(tok, nameF);
+      const sa = tokenFieldScore(tok, artF);
+      const best = Math.max(sn, sa);
+      if (best <= 0) { miss++; continue; }
+      v += best;
+      if (sn >= sa && sn > 0) hitName++; else hitArt++;
+    }
+    if (miss > 0) {
+      /* 有词完全未命中: 用整曲子序列兜底, 超过一半词落空则淘汰 */
+      const f = fuzzyScore(q, s.name + " " + s.artist);
+      if (f < 0 || miss > Math.ceil(toks.length / 2)) return -1;
+      v += Math.min(f, 25) - miss * 35;
+    }
+    /* 跨字段联合命中(歌名+歌手各占至少一词)——「idol yoasobi」场景的核心加权 */
+    if (hitName > 0 && hitArt > 0 && toks.length > 1) v += 130;
+    /* 所有词都命中: 完整覆盖奖励 */
+    if (miss === 0 && toks.length > 1) v += 30;
+  } else {
     const f = fuzzyScore(q, s.name + " " + s.artist);
     if (f < 0) return -1;
-    v += Math.min(f, 35);
+    v += f;
   }
-  /* 歌手匹配 */
-  if (ar) {
-    if (ar === qn) v += 70;
-    else if (ar.includes(qn)) v += 35;
-    else {
-      /* 查询串里含歌手名(如「晴天 周杰伦」): 拆词双向命中加权 */
-      const parts = q.toLowerCase().split(/[\s,，]+/).filter(Boolean);
-      if (parts.length > 1 && parts.some(p => normText(p) && ar.includes(normText(p)))) v += 45;
-    }
-  }
+
+  /* 整串与歌名(或别名)完全相同: 单/多词查询的强信号 */
+  if (qn && nameF.some(f => f === qn)) v += 120;
+  else if (qn && nameF.some(f => f.startsWith(qn))) v += 50;
   /* 官方版本优先: 查询未带变体词时, Live/翻唱/伴奏等降权 */
   if (!wantVariant && VARIANT_RE.test(s.name + " " + (s.album || ""))) v -= 70;
   /* 热度加权(cloudsearch 提供 pop 0~100) */
   if (s.pop) v += Math.min(30, s.pop * 0.3);
-  /* 服务端原生顺序 tie-break: 每后退一名 -0.8 */
+  /* 服务端原生顺序 tie-break */
   v -= serverIdx * 0.8;
   return v;
 }
