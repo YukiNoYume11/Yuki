@@ -212,6 +212,11 @@ fn weapi(obj: &serde_json::Value) -> (String, String) {
 
 /// POST weapi 接口, 返回解密后的 JSON; cookie 可选
 fn weapi_post(path: &str, obj: serde_json::Value, cookie: Option<&str>) -> Result<serde_json::Value, String> {
+    weapi_post_sc(path, obj, cookie).map(|(j, _)| j)
+}
+
+/// 同 weapi_post, 额外返回 Set-Cookie 头("name=value"列表)——扫码登录需要会话延续
+fn weapi_post_sc(path: &str, obj: serde_json::Value, cookie: Option<&str>) -> Result<(serde_json::Value, Vec<String>), String> {
     let (params, enc_sec_key) = weapi(&obj);
     let mut req = auth_client()
         .post(format!("https://music.163.com{path}"))
@@ -223,15 +228,25 @@ fn weapi_post(path: &str, obj: serde_json::Value, cookie: Option<&str>) -> Resul
     }
     let resp = req.send().map_err(|e| format!("send: {e}"))?;
     let status = resp.status();
+    let set_cookies: Vec<String> = resp
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .filter_map(|s| s.split(';').next())
+        .map(|s| s.trim().to_string())
+        .filter(|s| s.contains('='))
+        .collect();
     let body = resp.text().map_err(|e| format!("body: {e}"))?;
     let dec = if body.trim_start().starts_with('{') {
         body.clone()
     } else {
         aes_decrypt_b64(&body, WEAPI_NONCE)
     };
-    serde_json::from_str(&dec)
+    let j = serde_json::from_str(&dec)
         .or_else(|_| serde_json::from_str(&body))
-        .map_err(|e| format!("parse {status}: {e} :: {}", &dec[..dec.len().min(200)]))
+        .map_err(|e| format!("parse {status}: {e} :: {}", &dec[..dec.len().min(200)]))?;
+    Ok((j, set_cookies))
 }
 
 fn extract_csrf(cookie: &str) -> String {
@@ -260,6 +275,9 @@ struct LoginInfo {
 }
 
 struct LoginState(std::sync::Mutex<Option<LoginInfo>>);
+
+/// 扫码会话的匿名 Cookie(unikey 响应的 Set-Cookie)——轮询必须带上, 否则易触发易盾风控 8821
+static QR_SESSION: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 fn login_info(state: &tauri::State<'_, LoginState>) -> Option<LoginInfo> {
     state.0.lock().ok()?.clone()
@@ -292,8 +310,18 @@ fn profile_json(info: &LoginInfo) -> serde_json::Value {
 
 #[tauri::command]
 fn netease_qr_key(app: tauri::AppHandle) -> Result<String, String> {
-    let j = weapi_post("/weapi/login/qrcode/unikey", serde_json::json!({"type": 1}), None)?;
-    log_msg(&app, &format!("LOGIN qr_key resp={j}"));
+    // 浏览器同款流程: unikey 响应的匿名会话 Cookie 存下, 后续轮询必须复用同一会话
+    let (j, sc) = weapi_post_sc(
+        "/weapi/login/qrcode/unikey",
+        serde_json::json!({"type": 1, "csrf_token": ""}),
+        None,
+    )?;
+    if !sc.is_empty() {
+        if let Ok(mut g) = QR_SESSION.lock() {
+            *g = Some(sc.join("; "));
+        }
+    }
+    log_msg(&app, &format!("LOGIN qr_key resp={j} setcookie={}", sc.len()));
     j["unikey"]
         .as_str()
         .map(|s| s.to_string())
@@ -313,19 +341,39 @@ fn netease_qr_svg(unikey: String) -> Result<String, String> {
 
 #[tauri::command]
 fn netease_qr_check(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, key: String) -> Result<serde_json::Value, String> {
-    let j = weapi_post("/weapi/login/qrcode/client/login", serde_json::json!({"key": key, "type": 1}), None)?;
+    let sess = QR_SESSION.lock().ok().and_then(|g| g.clone());
+    let (j, sc) = weapi_post_sc(
+        "/weapi/login/qrcode/client/login",
+        serde_json::json!({"key": key, "type": 1}),
+        sess.as_deref(),
+    )?;
     let code = j["code"].as_i64().unwrap_or(-1);
     log_msg(&app, &format!("LOGIN qr_check code={code}"));
     let mut out = serde_json::json!({"code": code});
     if code == 803 {
-        if let Some(cookie) = j["cookie"].as_str() {
-            let cookie = cookie.to_string();
+        // 803 授权成功: cookie 可能在响应体的 cookie 字段, 也可能只在 Set-Cookie 头
+        let mut cookie = j["cookie"].as_str().unwrap_or("").to_string();
+        // 仅补充 body 里缺失的键(避免 MUSIC_U 重复歧义)
+        for kv in &sc {
+            let name = kv.split('=').next().unwrap_or("");
+            if !name.is_empty() && !cookie.contains(&format!("{name}=")) {
+                if !cookie.is_empty() && !cookie.ends_with(';') {
+                    cookie.push_str("; ");
+                }
+                cookie.push_str(kv);
+            }
+        }
+        if !cookie.is_empty() {
             if let Some(info) = fetch_profile(&cookie) {
                 log_msg(&app, &format!("LOGIN ok uid={} nick={}", info.uid, info.nickname));
                 out["profile"] = profile_json(&info);
                 out["cookie"] = serde_json::Value::String(cookie.clone());
                 *state.0.lock().unwrap() = Some(info);
+            } else {
+                log_msg(&app, "LOGIN 803 but fetch_profile failed");
             }
+        } else {
+            log_msg(&app, "LOGIN 803 but no cookie in body/header");
         }
     }
     Ok(out)

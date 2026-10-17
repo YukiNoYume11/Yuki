@@ -561,15 +561,16 @@ function classify(rms, centroid, onsets) {
   } else {
     const rel = (rms - st.min) / (st.max - st.min + 1e-6); // 0~1 歌内相对能量
     const avg = st.sum / st.n;
-    if (rel > 0.82 && onsets > 3) key = "peak";
-    else if (rel > 0.55 || rms > avg * 1.35) key = "excited";
-    else if (rel < 0.25 && centroid < 0.2) key = "melancholy";
+    // 变色阈值已整体下调: 更低能量即切换情绪/字体色, 观感更灵动
+    if (rel > 0.68 && onsets > 2) key = "peak";
+    else if (rel > 0.42 || rms > avg * 1.2) key = "excited";
+    else if (rel < 0.32 && centroid < 0.28) key = "melancholy";
     else key = "calm";
   }
   if (key === moodCur) { moodCand = null; return; }
   if (!moodAuto) return;
   if (key !== moodCand) { moodCand = key; moodCandSince = Date.now(); }
-  else if (Date.now() - moodCandSince > 3000) { setMood(key); moodCand = null; }
+  else if (Date.now() - moodCandSince > 1800) { setMood(key); moodCand = null; }
 }
 function drawEQ(fq) {
   /* 对数分组: 低频细划分、高频粗划分, 呈现真实频谱能量分布 */
@@ -720,7 +721,7 @@ function cmInvoke(cmd, args) {
   if (!window.__TAURI_INTERNALS__) return Promise.reject(new Error("非 Tauri 环境"));
   return window.__TAURI_INTERNALS__.invoke(cmd, args || {});
 }
-let cmLoggedIn = false, loginTimer = null;
+let cmLoggedIn = false, loginTimer = null, qrRiskTries = 0;
 
 function showLoggedOut() {
   cmLoggedIn = false;
@@ -762,24 +763,41 @@ async function pollQr(unikey) {
     const r = await cmInvoke("netease_qr_check", { key: unikey });
     const code = r && r.code;
     if (code === 803) {
-      $("qr-status").textContent = "登录成功！";
-      if (r.cookie) { try { localStorage.setItem("cm_music_u", r.cookie); } catch (e) {} }
-      await refreshLogin();
-      setTimeout(() => { $("qr-modal").style.display = "none"; }, 800);
+      if (r.cookie) {
+        $("qr-status").textContent = "登录成功！";
+        try { localStorage.setItem("cm_music_u", r.cookie); } catch (e) {}
+        await refreshLogin();
+        setTimeout(() => { $("qr-modal").style.display = "none"; }, 800);
+      } else {
+        $("qr-status").textContent = "授权成功但未取到会话，请改用粘贴 Cookie 登录";
+      }
       return;
     } else if (code === 800) {
       $("qr-status").textContent = "二维码已过期，正在刷新…";
       loginTimer = setTimeout(startQrLogin, 800);
       return;
+    } else if (code === 8821) {
+      // 易盾风控: 当前会话被要求行为验证 → 换新会话重取二维码, 连续多次则引导 Cookie 登录
+      qrRiskTries++;
+      if (qrRiskTries >= 3) {
+        $("qr-status").textContent = "网易云风控拦截扫码，请改用下方「粘贴 Cookie」登录";
+        $("qr-box").innerHTML = "";
+        cmSay("扫码被风控了，粘个 Cookie 也能登", 4000, true);
+        return;
+      }
+      $("qr-status").textContent = "触发网易云风控，正在换新的二维码…（" + qrRiskTries + "/3）";
+      loginTimer = setTimeout(startQrLogin, 1200);
+      return;
     } else if (code === 802) {
       $("qr-status").textContent = "已扫码，请在手机上确认";
+      qrRiskTries = 0;
     } else if (code === 801) {
       $("qr-status").textContent = "请用网易云音乐 App 扫码";
     }
-    loginTimer = setTimeout(() => pollQr(unikey), 2000);
+    loginTimer = setTimeout(() => pollQr(unikey), 3000);
   } catch (e) {
     $("qr-status").textContent = "轮询失败: " + (e && e.message || e);
-    loginTimer = setTimeout(() => pollQr(unikey), 3000);
+    loginTimer = setTimeout(() => pollQr(unikey), 4000);
   }
 }
 async function pasteCookie(c) {
@@ -1160,7 +1178,7 @@ function execCmd(raw) {
       break;
     case "login":
       if (arg.startsWith("cookie ")) pasteCookie(arg.slice(7));
-      else startQrLogin();
+      else { qrRiskTries = 0; startQrLogin(); }
       break;
     case "logout": doLogout(); break;
     case "my":
@@ -1243,7 +1261,7 @@ document.addEventListener("keyup", (e) => {
 });
 
 /* 侧边栏 / 扫码弹窗事件 */
-$("btn-login").addEventListener("click", startQrLogin);
+$("btn-login").addEventListener("click", () => { qrRiskTries = 0; startQrLogin(); });
 $("btn-cookie").addEventListener("click", () => pasteCookie($("cookie-input").value));
 $("cookie-input").addEventListener("keydown", (e) => { if (e.key === "Enter") pasteCookie(e.target.value); });
 $("btn-logout").addEventListener("click", doLogout);
