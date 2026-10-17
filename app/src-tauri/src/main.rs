@@ -296,36 +296,103 @@ fn normalize_cookie(raw: &str) -> String {
     }
 }
 
-/// 用 Cookie 拉取用户信息(/api/nav), 失败返回 None; 带日志探针
+/// 从 JSON 按多个候选路径取第一个非零 i64
+fn json_pick_i64(j: &serde_json::Value, paths: &[&[&str]]) -> i64 {
+    for path in paths {
+        let mut cur = j;
+        for seg in *path {
+            cur = &cur[*seg];
+        }
+        if let Some(v) = cur.as_i64() {
+            if v != 0 {
+                return v;
+            }
+        }
+    }
+    0
+}
+/// 从 JSON 按多个候选路径取第一个非空字符串
+fn json_pick_str(j: &serde_json::Value, paths: &[&[&str]]) -> String {
+    for path in paths {
+        let mut cur = j;
+        for seg in *path {
+            cur = &cur[*seg];
+        }
+        if let Some(s) = cur.as_str() {
+            if !s.is_empty() {
+                return s.to_string();
+            }
+        }
+    }
+    String::new()
+}
+
+/// 用 Cookie 拉取用户信息。/api/nav 已废弃(实测返回 code=404「接口未找到」),
+/// 改用 weapi /weapi/user/info(301=未登录, 200=已登录); 昵称/头像缺失时用
+/// /weapi/v1/user/detail/<uid> 补全。全链路带日志探针(排障第一步读此日志)。
 fn fetch_profile(app: &tauri::AppHandle, cookie: &str) -> Option<LoginInfo> {
-    let resp = auth_client()
-        .get("https://music.163.com/api/nav")
-        .header("Referer", "https://music.163.com/")
-        .header("Cookie", cookie)
-        .send();
-    let resp = match resp {
-        Ok(r) => r,
+    let j = match weapi_post("/weapi/user/info", serde_json::json!({}), Some(cookie)) {
+        Ok(j) => j,
         Err(e) => {
-            log_msg(app, &format!("LOGIN nav send_err={e}"));
+            log_msg(app, &format!("LOGIN userinfo err={e}"));
             return None;
         }
     };
-    let status = resp.status();
-    let body = resp.text().unwrap_or_default();
-    let j: serde_json::Value = serde_json::from_str(&body).ok()?;
     let code = j["code"].as_i64().unwrap_or(-1);
-    let p = &j["data"]["profile"];
-    let uid = p["userId"].as_i64();
-    log_msg(
-        app,
-        &format!("LOGIN nav http={status} code={code} hasProfile={} cookieLen={}", uid.is_some(), cookie.len()),
+    let head: String = j.to_string().chars().take(500).collect();
+    log_msg(app, &format!("LOGIN userinfo code={code} cookieLen={} body={head}", cookie.len()));
+    if code != 200 {
+        return None; // 301/其它 = cookie 无效或过期
+    }
+    let uid = json_pick_i64(
+        &j,
+        &[
+            &["profile", "userId"][..],
+            &["userId"][..],
+            &["data", "profile", "userId"][..],
+            &["account", "id"][..],
+            &["data", "userId"][..],
+            &["data", "account", "id"][..],
+            &["profile", "uid"][..],
+        ],
     );
-    let uid = uid?;
+    let mut nickname = json_pick_str(
+        &j,
+        &[
+            &["profile", "nickname"][..],
+            &["nickname"][..],
+            &["data", "profile", "nickname"][..],
+            &["data", "nickname"][..],
+        ],
+    );
+    let mut avatar = json_pick_str(
+        &j,
+        &[
+            &["profile", "avatarUrl"][..],
+            &["avatarUrl"][..],
+            &["data", "profile", "avatarUrl"][..],
+            &["data", "avatarUrl"][..],
+        ],
+    );
+    // uid 存在但昵称/头像缺失时, 用 user/detail 补全
+    if uid > 0 && (nickname.is_empty() || avatar.is_empty()) {
+        if let Ok(d) = weapi_post(&format!("/weapi/v1/user/detail/{uid}"), serde_json::json!({}), Some(cookie)) {
+            if nickname.is_empty() {
+                nickname = json_pick_str(&d, &[&["profile", "nickname"][..], &["nickname"][..]]);
+            }
+            if avatar.is_empty() {
+                avatar = json_pick_str(&d, &[&["profile", "avatarUrl"][..], &["avatarUrl"][..]]);
+            }
+        }
+    }
+    if uid == 0 {
+        log_msg(app, "LOGIN userinfo code=200 但未解析出 uid(歌单不可用, VIP 播放不受影响)");
+    }
     Some(LoginInfo {
         cookie: cookie.to_string(),
         uid,
-        nickname: p["nickname"].as_str().unwrap_or("").to_string(),
-        avatar: p["avatarUrl"].as_str().unwrap_or("").to_string(),
+        nickname,
+        avatar,
     })
 }
 
