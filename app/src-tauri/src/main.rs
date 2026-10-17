@@ -103,16 +103,16 @@ fn auth_client() -> &'static reqwest::blocking::Client {
 }
 
 /// 执行一次代理抓取, 返回 (状态码, Content-Type, Content-Range, 响应体)
+/// send_referer/send_range 用于 403 时做请求头 A/B(定位网易 jdymusic 防盗链到底拒绝什么)。
 /// 注意: 绝不向 126.net CDN 透传 .163.com 的 MUSIC_U Cookie——跨域 Cookie 会被 Tengine 边缘直接 403。
-/// 浏览器取媒体流本就不带跨域 Cookie; 这里只用浏览器 UA(get_client 已设)+ Referer。
-fn proxy_fetch(target: &str, range: &Option<String>) -> Result<(StatusCode, String, Option<String>, Vec<u8>), String> {
+fn proxy_fetch(target: &str, range: &Option<String>, send_referer: bool) -> Result<(StatusCode, String, Option<String>, Vec<u8>), String> {
     let client = get_client();
     let mut req = client.get(target);
     // QQ 音乐接口需要 Referer 才返回数据
     if target.contains("qq.com") {
         req = req.header("Referer", "https://y.qq.com/");
     }
-    if target.contains("126.net") || target.contains("163.com") {
+    if send_referer && (target.contains("126.net") || target.contains("163.com")) {
         req = req.header("Referer", "https://music.163.com/");
     }
     // 转发 Range 头 → 上游返回 206 分段, 音频 seek 才能正常工作
@@ -151,27 +151,63 @@ fn handle_proxy(app: tauri::AppHandle, target: String, range: Option<String>) ->
             .unwrap();
     }
 
+    let is_audio = target.contains("music.126.net");
     let mut used = target.clone();
-    let mut result = proxy_fetch(&used, &range);
+    // 首选: http + Referer + Range(与浏览器 <audio> 取流一致)
+    let mut result = proxy_fetch(&used, &range, true);
 
-    // 网易 VIP 高级直链(jdymusic, http://)常被 CDN 边缘 403; 升级 https:// 重试一次
-    let need_https = if let Ok((st, _, _, _)) = &result {
-        st.as_u16() == 403 && used.starts_with("http://") && used.contains("music.126.net")
-    } else {
-        false
-    };
-    if need_https {
-        let https_target = format!("https://{}", &used["http://".len()..]);
-        log_msg(&app, &format!("PROXY http 403 → 重试 https url={}", &https_target[..https_target.len().min(120)]));
-        result = proxy_fetch(&https_target, &range);
-        used = https_target;
+    // 网易 VIP 高级直链(jdymusic, m704/m804)常被 CDN 边缘 403。对同一新鲜直链就地做请求变体 A/B,
+    // 命中非 403 即用——避免直链过期(20分钟)且无需多次重试。逐个记录状态以定位真凶。
+    if is_audio {
+        if let Ok((st, _, _, _)) = &result {
+            if st.as_u16() == 403 {
+                log_msg(&app, &format!("PROXY 403, 开始变体A/B fullUrl={used}"));
+                // 变体1: 升级 https
+                if used.starts_with("http://") {
+                    let https_target = format!("https://{}", &used["http://".len()..]);
+                    if let Ok(r) = proxy_fetch(&https_target, &range, true) {
+                        log_msg(&app, &format!("PROXY var1 https -> {}", r.0.as_u16()));
+                        if r.0.as_u16() != 403 {
+                            used = https_target;
+                            result = Ok(r);
+                        }
+                    }
+                }
+                // 变体2: 去掉 Referer(部分对象存储防盗链白名单不含 163.com Referer)
+                if matches!(&result, Ok((s, _, _, _)) if s.as_u16() == 403) {
+                    if let Ok(r) = proxy_fetch(&used, &range, false) {
+                        log_msg(&app, &format!("PROXY var2 no-referer -> {}", r.0.as_u16()));
+                        if r.0.as_u16() != 403 {
+                            result = Ok(r);
+                        }
+                    }
+                }
+                // 变体3: 去掉 Range(部分对象存储对 Range 请求返回 403)
+                if matches!(&result, Ok((s, _, _, _)) if s.as_u16() == 403) {
+                    if let Ok(r) = proxy_fetch(&used, &None, true) {
+                        log_msg(&app, &format!("PROXY var3 no-range -> {}", r.0.as_u16()));
+                        if r.0.as_u16() != 403 {
+                            result = Ok(r);
+                        }
+                    }
+                }
+                // 变体4: 去 Referer + 去 Range
+                if matches!(&result, Ok((s, _, _, _)) if s.as_u16() == 403) {
+                    if let Ok(r) = proxy_fetch(&used, &None, false) {
+                        log_msg(&app, &format!("PROXY var4 no-referer-no-range -> {}", r.0.as_u16()));
+                        if r.0.as_u16() != 403 {
+                            result = Ok(r);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     match result {
         Ok((status, ct, content_range, buf)) => {
-            // 音频 CDN 探针(仅 music.126.net 音频流, 不含 163.com 的 lyric/search API, 避免刷屏):
-            // 正常音频为数 MB 的 audio/mpeg; 若响应很小则是防盗链/错误文本, dump 前 300 字定位
-            if target.contains("music.126.net") {
+            // 音频 CDN 探针(仅 music.126.net 音频流): 正常音频为数 MB audio/mpeg; 小响应则 dump 正文定位
+            if is_audio {
                 let mut line = format!(
                     "PROXY music status={status} ct={ct} bytes={} url={}",
                     buf.len(),
