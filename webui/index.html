@@ -803,13 +803,18 @@ async function pollQr(unikey) {
 async function pasteCookie(c) {
   c = (c || "").trim();
   if (!c) { cmSay("请先粘贴 Cookie", 2600, true); return; }
+  window.cmLog && window.cmLog("LOGIN pasteCookie len=" + c.length);
+  echo("<span class='p'>⏺</span> 正在用 Cookie 登录…", "dim");
   try {
-    await cmInvoke("netease_set_cookie", { cookie: c });
+    const prof = await cmInvoke("netease_set_cookie", { cookie: c });
     try { localStorage.setItem("cm_music_u", c); } catch (e) {}
     await refreshLogin();
+    echo("<span class='p'>⏺</span> Cookie 登录成功: " + esc((prof && prof.nickname) || ""), "ok");
     cmSay("Cookie 登录成功", 2600, true);
   } catch (e) {
-    cmSay("Cookie 无效或已过期", 3200, true);
+    const msg = String(e && e.message || e);
+    echo("<span class='p'>⏺</span> Cookie 登录失败: " + esc(msg), "err");
+    cmSay("Cookie 登录失败：" + msg, 4200, true);
   }
 }
 function doLogout() {

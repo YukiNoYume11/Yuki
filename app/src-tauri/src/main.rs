@@ -283,17 +283,44 @@ fn login_info(state: &tauri::State<'_, LoginState>) -> Option<LoginInfo> {
     state.0.lock().ok()?.clone()
 }
 
-/// 用 Cookie 拉取用户信息(/api/nav), 失败返回 None
-fn fetch_profile(cookie: &str) -> Option<LoginInfo> {
+/// 规整用户粘贴的 Cookie: 若只给了 MUSIC_U 的值(无 '='), 自动补成 MUSIC_U=<值>
+fn normalize_cookie(raw: &str) -> String {
+    let c = raw.trim().trim_matches('"').trim();
+    if c.is_empty() {
+        return String::new();
+    }
+    if c.contains('=') {
+        c.to_string()
+    } else {
+        format!("MUSIC_U={c}")
+    }
+}
+
+/// 用 Cookie 拉取用户信息(/api/nav), 失败返回 None; 带日志探针
+fn fetch_profile(app: &tauri::AppHandle, cookie: &str) -> Option<LoginInfo> {
     let resp = auth_client()
         .get("https://music.163.com/api/nav")
         .header("Referer", "https://music.163.com/")
         .header("Cookie", cookie)
-        .send()
-        .ok()?;
-    let j: serde_json::Value = serde_json::from_str(&resp.text().ok()?).ok()?;
+        .send();
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            log_msg(app, &format!("LOGIN nav send_err={e}"));
+            return None;
+        }
+    };
+    let status = resp.status();
+    let body = resp.text().unwrap_or_default();
+    let j: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let code = j["code"].as_i64().unwrap_or(-1);
     let p = &j["data"]["profile"];
-    let uid = p["userId"].as_i64()?;
+    let uid = p["userId"].as_i64();
+    log_msg(
+        app,
+        &format!("LOGIN nav http={status} code={code} hasProfile={} cookieLen={}", uid.is_some(), cookie.len()),
+    );
+    let uid = uid?;
     Some(LoginInfo {
         cookie: cookie.to_string(),
         uid,
@@ -364,7 +391,7 @@ fn netease_qr_check(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, 
             }
         }
         if !cookie.is_empty() {
-            if let Some(info) = fetch_profile(&cookie) {
+            if let Some(info) = fetch_profile(&app, &cookie) {
                 log_msg(&app, &format!("LOGIN ok uid={} nick={}", info.uid, info.nickname));
                 out["profile"] = profile_json(&info);
                 out["cookie"] = serde_json::Value::String(cookie.clone());
@@ -380,9 +407,13 @@ fn netease_qr_check(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, 
 }
 
 #[tauri::command]
-fn netease_set_cookie(state: tauri::State<'_, LoginState>, cookie: String) -> Result<serde_json::Value, String> {
-    let cookie = cookie.trim().trim_matches('"').to_string();
-    let info = fetch_profile(&cookie).ok_or_else(|| "cookie 无效或已过期".to_string())?;
+fn netease_set_cookie(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, cookie: String) -> Result<serde_json::Value, String> {
+    let cookie = normalize_cookie(&cookie);
+    if cookie.is_empty() {
+        return Err("cookie 为空".to_string());
+    }
+    log_msg(&app, &format!("LOGIN set_cookie len={} preview={}", cookie.len(), &cookie[..cookie.len().min(24)]));
+    let info = fetch_profile(&app, &cookie).ok_or_else(|| "cookie 无效或已过期(/api/nav 未返回用户信息)".to_string())?;
     let out = profile_json(&info);
     *state.0.lock().unwrap() = Some(info);
     Ok(out)
