@@ -83,7 +83,7 @@ static CLIENT: std::sync::OnceLock<reqwest::blocking::Client> = std::sync::OnceL
 fn get_client() -> &'static reqwest::blocking::Client {
     CLIENT.get_or_init(|| {
         reqwest::blocking::Client::builder()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) ClaudeMusic/0.3")
+            .user_agent(UA)
             .timeout(std::time::Duration::from_secs(60))
             .build()
             .expect("failed to build http client")
@@ -102,7 +102,7 @@ fn auth_client() -> &'static reqwest::blocking::Client {
     })
 }
 
-fn handle_proxy(target: String, range: Option<String>) -> Response<Vec<u8>> {
+fn handle_proxy(app: tauri::AppHandle, target: String, range: Option<String>) -> Response<Vec<u8>> {
     let allowed = url::Url::parse(&target)
         .ok()
         .and_then(|u| u.host_str().map(|h| h.to_string()))
@@ -122,6 +122,10 @@ fn handle_proxy(target: String, range: Option<String>) -> Response<Vec<u8>> {
     // QQ 音乐接口需要 Referer 才返回数据
     if target.contains("qq.com") {
         req = req.header("Referer", "https://y.qq.com/");
+    }
+    // 网易 CDN(m70x/m80x.music.126.net)对 VIP 音频有防盗链: 需浏览器 UA(get_client 已设)+ Referer, 否则 403
+    if target.contains("126.net") || target.contains("163.com") {
+        req = req.header("Referer", "https://music.163.com/");
     }
     // 转发 Range 头 → 上游返回 206 分段, 音频 seek 才能正常工作
     if let Some(r) = &range {
@@ -144,6 +148,13 @@ fn handle_proxy(target: String, range: Option<String>) -> Response<Vec<u8>> {
                 .map(|s| s.to_string());
             let mut buf = Vec::with_capacity(1 << 20);
             let _ = resp.take(MAX_BODY).read_to_end(&mut buf);
+            // 音频 CDN 探针: 记录状态/类型/字节数, 排障 VIP 播放(403/格式错误)必读
+            if target.contains("126.net") || target.contains("163.com") {
+                log_msg(
+                    &app,
+                    &format!("PROXY music status={status} ct={ct} bytes={} url={}", buf.len(), &target[..target.len().min(90)]),
+                );
+            }
             // 注意: 不转发上游 Content-Length —— take(MAX_BODY) 截断后会与实际字节不符,
             // Tauri 会按 buf 实际长度自动设置
             let mut b = Response::builder()
@@ -156,10 +167,13 @@ fn handle_proxy(target: String, range: Option<String>) -> Response<Vec<u8>> {
             }
             b.body(buf).unwrap()
         }
-        Err(e) => Response::builder()
-            .status(StatusCode::BAD_GATEWAY)
-            .body(format!("proxy error: {e}").into_bytes())
-            .unwrap(),
+        Err(e) => {
+            log_msg(&app, &format!("PROXY send_err={e} url={}", &target[..target.len().min(90)]));
+            Response::builder()
+                .status(StatusCode::BAD_GATEWAY)
+                .body(format!("proxy error: {e}").into_bytes())
+                .unwrap()
+        }
     }
 }
 
@@ -347,6 +361,7 @@ fn fetch_profile(app: &tauri::AppHandle, cookie: &str) -> Option<LoginInfo> {
     let uid = json_pick_i64(
         &j,
         &[
+            &["userPoint", "userId"][..],
             &["profile", "userId"][..],
             &["userId"][..],
             &["data", "profile", "userId"][..],
@@ -558,7 +573,7 @@ fn netease_playlist_detail(app: tauri::AppHandle, state: tauri::State<'_, LoginS
 }
 
 #[tauri::command]
-fn netease_song_url(state: tauri::State<'_, LoginState>, id: i64) -> Result<String, String> {
+fn netease_song_url(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, id: i64) -> Result<String, String> {
     let cookie = login_info(&state).map(|i| i.cookie);
     let ids = format!("[{id}]");
     let j = weapi_post(
@@ -566,7 +581,16 @@ fn netease_song_url(state: tauri::State<'_, LoginState>, id: i64) -> Result<Stri
         serde_json::json!({"ids": ids, "br": 320000}),
         cookie.as_deref(),
     )?;
+    let code = j["code"].as_i64().unwrap_or(-1);
     let url = j["data"][0]["url"].as_str().unwrap_or("").to_string();
+    let host = url::Url::parse(&url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_string()))
+        .unwrap_or_default();
+    log_msg(
+        &app,
+        &format!("SONGURL id={id} code={code} urlLen={} host={} hasCookie={}", url.len(), host, cookie.is_some()),
+    );
     if url.is_empty() {
         Err("no url".into())
     } else {
@@ -593,7 +617,8 @@ fn main() {
             netease_song_url
         ])
         // 异步协议处理器: 网络请求在独立线程执行, 不阻塞 UI/WebView 线程
-        .register_asynchronous_uri_scheme_protocol("proxy", |_ctx, request, responder| {
+        .register_asynchronous_uri_scheme_protocol("proxy", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
             let uri = request.uri().clone();
             let range = request
                 .headers()
@@ -622,7 +647,7 @@ fn main() {
                 }
             }
             std::thread::spawn(move || {
-                responder.respond(handle_proxy(target, range));
+                responder.respond(handle_proxy(app, target, range));
             });
         })
         .run(tauri::generate_context!())
