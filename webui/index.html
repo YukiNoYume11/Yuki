@@ -1004,7 +1004,8 @@ async function setAudioSrc(t) {
     }
   }
   if (!rawUrl) return null;
-  if (window.__CM_IS_TAURI__ && /music\.163\.com|126\.net|qqmusic\.qq\.com/.test(rawUrl)) {
+  /* 音频必须全部走代理(同源 proxy.localhost): 直连跨域会污染 Web Audio 图导致无声但进度条照走 */
+  if (window.__CM_IS_TAURI__ && /music\.163\.com|126\.net|qq\.com/.test(rawUrl)) {
     try {
       const u = await window.__CM_PROXY__(rawUrl);
       audio.crossOrigin = "anonymous";
