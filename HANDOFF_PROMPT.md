@@ -1,13 +1,13 @@
 # ClaudeMusic 项目交接提示词（复制此全文作为下一场对话的开场消息）
 
-我正在开发 **ClaudeMusic**——一个 Claude Code 终端风格的桌面音乐播放器，项目位于 `D:\ClaudeMusic`。你之前已参与开发到 v0.4.9，以下是完整上下文，请以此为基础继续。
+我正在开发 **ClaudeMusic**——一个 Claude Code 终端风格的桌面音乐播放器，项目位于 `D:\ClaudeMusic`。你之前已参与开发到 **v0.4.21**（网易云登录 + VIP 播放 + 侧边栏歌单均已完成并实测通过），以下是完整上下文，请以此为基础继续。
 
 ## 项目概况
 
 - **技术栈**：Tauri 2（Rust 后端 `app/src-tauri/`）+ 纯 HTML/CSS/JS 单文件前端（`webui/index.html`，约 900 行，无框架无构建）
 - **设计**：Claude Code 终端风格（暗色 #1F1E1D / 赭橙 #D97757 / 等宽字体 / `>` 命令提示符 / 像素小螃蟹吉祥物）
 - **核心功能**（全部可用）：网易云搜索+播放（免费曲目外链）、**网易云登录（扫码为主+粘贴Cookie兜底）→ VIP曲目播放（eapi客户端取链）+侧边栏「我的歌单」+歌单URL/ID导入**、三级模糊搜索（主搜→suggest→QQ兜底+相关度排序）、Radio Browser 电台兜底、LRC 歌词字幕层（情绪词典染色）、频谱均衡器（Web Audio 真实分析+模拟降级）、Claude 像素形象浮动层（走位交互+右上角气泡）、情绪引擎（歌内相对能量归一化：高潮/欢快/平静/忧郁）、命令行（↑历史/Tab补全/光标竖线跟随/失焦隐藏）、快进快退±10s/倍速0.5-2.0x、方向键绑定（单击±5s/长按→2倍速/长按←持续快退）、设置 localStorage 持久化、`diag` 自检命令、黑匣子日志
-- **版本管理**：git 仓库在 D:\ClaudeMusic，tag v0.1-webui → v0.4.21，当前 HEAD=baf795f（v0.4.21）。版本号统一 0.4.6（Cargo.toml/tauri.conf.json/package.json）。**git 不在系统 PATH**，用便携版：`C:\Users\Yuki\.workbuddy\binaries\PortableGit\versions\1.3.0\cmd\git.exe`
+- **版本管理**：git 仓库在 D:\ClaudeMusic，tag v0.1-webui → **v0.4.21**（最新里程碑；具体 HEAD 见 `git log --oneline -1`）。版本号统一 0.4.6（Cargo.toml/tauri.conf.json/package.json）。**git 不在系统 PATH**，用便携版：`C:\Users\Yuki\.workbuddy\binaries\PortableGit\versions\1.3.0\cmd\git.exe`
 - **命令**：play <词> / radio <名> / next / prev / pause / vol 0-100 / mood auto|欢快|平静|忧郁|高潮 / lyric on|off / ff|rw [秒] / speed [倍速] / login [cookie 值] / logout / my / playlist <url|id> / demo / diag / help / clear
 - **构建**：`cd D:\ClaudeMusic\app\src-tauri && export RUSTUP_HOME="D:\ClaudeMusic\toolchain\rustup" CARGO_HOME="D:\ClaudeMusic\toolchain\cargo" PATH="/d/ClaudeMusic/toolchain/cargo/bin:$PATH" && cargo build`（rsproxy 镜像已配好）。产物 target/debug/claudemusic.exe；测试用副本 D:\ClaudeMusic\claudemusic-test.exe（用户双击运行的那个）
 
@@ -18,7 +18,7 @@
 3. **黑匣子日志**：Rust app_log 命令 → `%LOCALAPPDATA%\local.claudemusic\logs\claudemusic.log`（UTF-8+BOM、2MB 轮转）；另有 proxy.log 记录代理请求。前端钩子：启动自检（搜索/CDN/QQ 三通道）、AUDIO 事件、LRC、LOAD、ANALYSER tainted、LYRIC-CALL/FETCHLRC 探针。**排障第一步永远是读这个日志**
 4. **布局**：`.viz-strip`（固定 118px，频谱+字幕层）位于输出区与播放条之间——不可移回可滚动区（曾因 absolute bottom:0 滚出视野），字幕层渐变已移到条带背景（曾遮挡频谱）
 5. **歌词**：仅切歌时 loadLyrics 一次（playing 事件不得触发）；syncLrc 二分查找（支持回退 seek）；染色用 ~80 词情绪词典（k1/k2/k3 循环，只有命中词上色）
-6. **情绪**：歌内相对能量（rms min/max/avg 统计，单帧超均值 4 倍截断去极值）。阈值已两次下调（v0.4.12、v0.4.21）使变色更灵敏：rel>0.55且onsets>1 高潮 / rel>0.32或rms>1.1倍均值 欢快 / rel<0.42且centroid<0.34 忧郁；前 2s 热身）；节流：情绪 1.2s 稳定窗、气泡间隔 2.5s、闲聊 55s 窗 25% 概率
+6. **情绪**：歌内相对能量（rms min/max/avg 统计，单帧超均值 4 倍截断去极值）。阈值已两次下调（v0.4.12、v0.4.21）使变色更灵敏：rel>0.55 且 onsets>1 → 高潮 / rel>0.32 或 rms>1.1×均值 → 欢快 / rel<0.42 且 centroid<0.34 → 忧郁；前 2s 热身。节流：情绪 1.2s 稳定窗、气泡间隔 2.5s、闲聊 55s 窗 25% 概率
 7. **健壮性**：loadTrack 自动跳过无音源曲目（QQ 未登录）；failStreak 连播失败计数防死循环（连续 min(5,队列) 首失败停止）；tainted 需连续 3s 全零才判污染且每 60 帧嗅探可恢复；moodLoop 仅播放时跑 rAF
 8. **CSP**：tauri.conf 的 csp 当前为 **null**（调试期间临时禁用；基础 CSP 策略在 v0.4.6 有过可用版本，稳定后应恢复）
 9. **mediaSession 已移除**（怀疑与 WebView2 155 崩溃相关，媒体键功能暂缓）
