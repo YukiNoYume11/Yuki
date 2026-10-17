@@ -10,11 +10,13 @@ use tauri::http::{Response, StatusCode};
 use tauri::Manager;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// ---- weapi 加密相关依赖 ----
+// ---- weapi/eapi 加密相关依赖 ----
 use aes::Aes128;
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyInit, KeyIvInit};
 use cbc::{Decryptor, Encryptor};
+use ecb::Encryptor as EcbEncryptor;
+use md5::{Digest as Md5Digest, Md5};
 use num_bigint::BigUint;
 use num_traits::Num;
 use rand::Rng;
@@ -22,6 +24,7 @@ use qrcode::render::svg;
 
 type Aes128CbcEnc = Encryptor<Aes128>;
 type Aes128CbcDec = Decryptor<Aes128>;
+type Aes128EcbEnc = EcbEncryptor<Aes128>;
 
 const MAX_BODY: u64 = 48 * 1024 * 1024; // 48MB 上限(网易云 mp3 约 3-10MB)
 
@@ -32,6 +35,11 @@ const RSA_MODULUS: &str = "00e0b509f6259df8642dbc35662901477df22677ec152b5ff68ac
 const RSA_EXPONENT: u32 = 65537;
 const BASE62: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+// eapi(官方客户端加密)常量: 用于取 VIP 可播直链(weapi/os_web 对客户端专属曲返回受限 jdymusic 直链, CDN 403)
+const EAPI_KEY: &[u8] = b"e82ckenh8dichen8";
+const API_DOMAIN: &str = "https://interface.music.163.com";
+const UA_CLIENT: &str = "NeteaseMusic 9.0.90/5038 (iPhone; iOS 16.2; zh_CN)";
 
 /// 前端黑匣子日志: 写入 Tauri 标准日志目录(随安装位置自适应, 不硬编码盘符)
 /// 文件带 UTF-8 BOM(中文 Windows 下记事本/PowerShell 不乱码), 超 2MB 自动轮转
@@ -345,6 +353,140 @@ fn extract_csrf(cookie: &str) -> String {
         .unwrap_or_default()
 }
 
+// ==================== eapi (官方客户端加密) ====================
+// weapi(os_web 网页身份)对"需客户端播放"的 VIP 曲目只返回受限 jdymusic/obj 直链, CDN 一律 403。
+// eapi 以官方客户端身份(os=pc + 客户端 header 对象 + 客户端 UA)请求, 换取可拉取的直链
+// (ymusic / jd-musicrep-ts), 实测返回真实 MP3(ID3 头, 206 audio/mpeg)。
+
+static EAPI_CLIENT: std::sync::OnceLock<reqwest::blocking::Client> = std::sync::OnceLock::new();
+fn eapi_client() -> &'static reqwest::blocking::Client {
+    EAPI_CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .user_agent(UA_CLIENT)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("failed to build eapi client")
+    })
+}
+
+/// 进程级稳定 deviceId(真实设备 deviceId 固定, 避免每次请求都变触发风控)
+static DEVICE_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+fn device_id() -> &'static str {
+    DEVICE_ID.get_or_init(|| {
+        let mut rng = rand::thread_rng();
+        (0..32).map(|_| BASE62[rng.gen_range(0..BASE62.len())] as char).collect()
+    })
+}
+
+/// 从 Cookie 串按名取值
+fn extract_cookie_value(cookie: &str, name: &str) -> String {
+    cookie
+        .split(';')
+        .map(|kv| kv.trim())
+        .find_map(|kv| {
+            let mut it = kv.splitn(2, '=');
+            if it.next()? == name {
+                it.next().map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn md5_hex(data: &[u8]) -> String {
+    let mut h = Md5::new();
+    Md5Digest::update(&mut h, data);
+    let out = h.finalize();
+    let mut s = String::with_capacity(32);
+    for b in out.iter() {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
+
+fn hex_upper(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{:02X}", b));
+    }
+    s
+}
+
+/// eapi 加密: params = AES-128-ECB("{uri}-36cd479b6b5-{json}-36cd479b6b5-{md5}") → 大写 hex
+fn eapi_encrypt(uri: &str, data: &serde_json::Value) -> String {
+    let text = data.to_string();
+    let digest = md5_hex(format!("nobody{uri}use{text}md5forencrypt").as_bytes());
+    let payload = format!("{uri}-36cd479b6b5-{text}-36cd479b6b5-{digest}");
+    let ct = Aes128EcbEnc::new_from_slice(EAPI_KEY)
+        .expect("eapi key len")
+        .encrypt_padded_vec_mut::<Pkcs7>(payload.as_bytes());
+    hex_upper(&ct)
+}
+
+/// 客户端 header 对象序列化为 Cookie 串(eapi 请求头字段同时以 Cookie 发送)
+fn header_cookie(header: &serde_json::Value) -> String {
+    let mut parts = Vec::new();
+    if let Some(obj) = header.as_object() {
+        for (k, v) in obj {
+            let vs = match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            parts.push(format!("{}={}", urlencoding::encode(k), urlencoding::encode(&vs)));
+        }
+    }
+    parts.join("; ")
+}
+
+/// 构造 eapi 客户端 header 对象(os=pc 官方客户端身份; 登录则带 MUSIC_U)
+fn build_client_header(cookie: Option<&str>) -> serde_json::Value {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let mut rng = rand::thread_rng();
+    let mut h = serde_json::json!({
+        "osver": "Microsoft-Windows-10-Professional-build-19045-64bit",
+        "deviceId": device_id(),
+        "os": "pc",
+        "appver": "3.1.17.204416",
+        "versioncode": "140",
+        "mobilename": "",
+        "buildver": (now_ms / 1000).to_string(),
+        "resolution": "1920x1080",
+        "__csrf": cookie.map(extract_csrf).unwrap_or_default(),
+        "channel": "netease",
+        "requestId": format!("{}_{}", now_ms, rng.gen_range(0..1000)),
+    });
+    if let Some(c) = cookie {
+        let mu = extract_cookie_value(c, "MUSIC_U");
+        if !mu.is_empty() {
+            h["MUSIC_U"] = serde_json::Value::String(mu);
+        }
+    }
+    h
+}
+
+/// POST eapi 接口(interface.music.163.com/eapi/...); e_r=false 时响应为明文 JSON
+fn eapi_post(uri: &str, cookie: Option<&str>, mut data: serde_json::Value) -> Result<serde_json::Value, String> {
+    let header = build_client_header(cookie);
+    data["header"] = header.clone();
+    data["e_r"] = serde_json::json!(false);
+    let params = eapi_encrypt(uri, &data);
+    let url = format!("{API_DOMAIN}/eapi/{}", &uri[5..]); // 去掉 "/api/" 前缀
+    let resp = eapi_client()
+        .post(&url)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Referer", "https://music.163.com/")
+        .header("Cookie", header_cookie(&header))
+        .form(&[("params", params.as_str())])
+        .send()
+        .map_err(|e| format!("send: {e}"))?;
+    let body = resp.text().map_err(|e| format!("body: {e}"))?;
+    serde_json::from_str(&body).map_err(|e| format!("parse: {e} :: {}", &body[..body.len().min(200)]))
+}
+
 // ==================== 登录态 ====================
 
 #[derive(Clone)]
@@ -642,62 +784,56 @@ fn netease_playlist_detail(app: tauri::AppHandle, state: tauri::State<'_, LoginS
 #[tauri::command]
 fn netease_song_url(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, id: i64) -> Result<String, String> {
     let cookie = login_info(&state).map(|i| i.cookie);
-    let ids = format!("[{id}]");
     let ck = cookie.as_deref();
-    // 旧接口 /weapi/song/enhance/player/url 对 SVIP 账号返回 jdymusic/obj 高级对象存储直链,
-    // 该链路 CDN 侧一律 403(Tengine 无权限), 非可播音频。改用 v1 接口显式指定 level:
-    // exhigh(320k)/standard(128k) 属常规档, 走开放 ymusic 直链(实测可直接播放);
-    // 避开 jymaster/jyeffect 等 "jy" 高级档(=jdymusic)。命中非 jdymusic 直链立即返回。
+    // 主路径: eapi(官方客户端身份)。weapi(os_web)对"需客户端播放"的 VIP 曲只给受限 jdymusic 直链(CDN 403),
+    // eapi 换取可拉取的 ymusic / jd-musicrep-ts 直链(Node 实测返回真实 MP3)。命中非 jdymusic 立即返回。
     let mut fallback = String::new();
     for level in ["exhigh", "standard", "lossless"] {
-        let j = match weapi_post(
-            "/weapi/song/enhance/player/url/v1",
-            serde_json::json!({"ids": ids, "level": level, "encodeType": "flac", "csrf_token": ""}),
-            ck,
-        ) {
-            Ok(j) => j,
-            Err(e) => {
-                log_msg(&app, &format!("SONGURL v1 id={id} level={level} err={e}"));
-                continue;
+        let data = serde_json::json!({"ids": format!("[{id}]"), "level": level, "encodeType": "flac"});
+        match eapi_post("/api/song/enhance/player/url/v1", ck, data) {
+            Ok(j) => {
+                let url = j["data"][0]["url"].as_str().unwrap_or("").to_string();
+                if url.is_empty() {
+                    log_msg(&app, &format!("SONGURL eapi id={id} level={level} code={} emptyUrl", j["code"].as_i64().unwrap_or(-1)));
+                    continue;
+                }
+                let host = url::Url::parse(&url)
+                    .ok()
+                    .and_then(|u| u.host_str().map(|h| h.to_string()))
+                    .unwrap_or_default();
+                let jd = url.contains("jdymusic");
+                log_msg(
+                    &app,
+                    &format!("SONGURL eapi id={id} level={level} code={} host={} jdymusic={} urlLen={}", j["code"].as_i64().unwrap_or(-1), host, jd, url.len()),
+                );
+                if !jd {
+                    return Ok(url);
+                }
+                if fallback.is_empty() {
+                    fallback = url;
+                }
             }
-        };
-        let url = j["data"][0]["url"].as_str().unwrap_or("").to_string();
-        if url.is_empty() {
-            log_msg(&app, &format!("SONGURL v1 id={id} level={level} code={} emptyUrl", j["code"].as_i64().unwrap_or(-1)));
-            continue;
-        }
-        let host = url::Url::parse(&url)
-            .ok()
-            .and_then(|u| u.host_str().map(|h| h.to_string()))
-            .unwrap_or_default();
-        let jd = url.contains("jdymusic");
-        log_msg(
-            &app,
-            &format!("SONGURL v1 id={id} level={level} code={} host={} jdymusic={} urlLen={}", j["code"].as_i64().unwrap_or(-1), host, jd, url.len()),
-        );
-        if !jd {
-            return Ok(url); // 开放 ymusic 直链, 直接可用
-        }
-        if fallback.is_empty() {
-            fallback = url;
+            Err(e) => log_msg(&app, &format!("SONGURL eapi id={id} level={level} err={e}")),
         }
     }
-    // v1 全为 jdymusic 时, 退回旧接口再试一次
-    if !fallback.is_empty() {
-        log_msg(&app, &format!("SONGURL id={id} v1 仅得 jdymusic, 回退旧接口"));
-    }
-    if let Ok(j) = weapi_post(
-        "/weapi/song/enhance/player/url",
-        serde_json::json!({"ids": ids, "br": 320000}),
-        ck,
-    ) {
-        let url = j["data"][0]["url"].as_str().unwrap_or("").to_string();
-        if !url.is_empty() && !url.contains("jdymusic") {
-            log_msg(&app, &format!("SONGURL old id={id} host=ymusic urlLen={}", url.len()));
-            return Ok(url);
-        }
-        if fallback.is_empty() && !url.is_empty() {
-            fallback = url;
+    // eapi 全失败时回退 weapi v1(免费曲/部分曲目仍可用)
+    if fallback.is_empty() {
+        log_msg(&app, &format!("SONGURL id={id} eapi 未得可播直链, 回退 weapi"));
+        for level in ["exhigh", "standard"] {
+            if let Ok(j) = weapi_post(
+                "/weapi/song/enhance/player/url/v1",
+                serde_json::json!({"ids": format!("[{id}]"), "level": level, "encodeType": "flac", "csrf_token": ""}),
+                ck,
+            ) {
+                let url = j["data"][0]["url"].as_str().unwrap_or("").to_string();
+                if !url.is_empty() && !url.contains("jdymusic") {
+                    log_msg(&app, &format!("SONGURL weapi id={id} level={level} urlLen={}", url.len()));
+                    return Ok(url);
+                }
+                if fallback.is_empty() && !url.is_empty() {
+                    fallback = url;
+                }
+            }
         }
     }
     if fallback.is_empty() {
