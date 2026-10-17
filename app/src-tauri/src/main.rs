@@ -1037,6 +1037,22 @@ fn qq_set_cookie(app: tauri::AppHandle, state: tauri::State<'_, QqState>, cookie
     Ok(serde_json::json!({"uin": uin, "nickname": nickname}))
 }
 
+/// 一键导入: 读取 %LOCALAPPDATA%\local.claudemusic\qq-cookie.txt(由浏览器辅助提取写入), 成功后删除文件
+#[tauri::command]
+fn qq_import_cookie_file(app: tauri::AppHandle, state: tauri::State<'_, QqState>) -> Result<serde_json::Value, String> {
+    let path = std::env::var("LOCALAPPDATA")
+        .map(|d| format!(r"{d}\local.claudemusic\qq-cookie.txt"))
+        .map_err(|_| "无法定位应用数据目录".to_string())?;
+    let cookie = std::fs::read_to_string(&path)
+        .map_err(|_| "未找到 Cookie 导入文件（可改用 qlogin <cookie> 手动粘贴）".to_string())?;
+    let keep = cookie.trim().to_string();
+    let mut r = qq_set_cookie(app, state, cookie)?;
+    let _ = std::fs::remove_file(&path); // 导入后删除, 不落盘存凭证
+    // 回传 cookie 供前端 localStorage 持久化(与手动粘贴路径一致, 仅存本机)
+    r.as_object_mut().map(|m| m.insert("cookie".into(), serde_json::Value::String(keep)));
+    Ok(r)
+}
+
 #[tauri::command]
 fn qq_status(state: tauri::State<'_, QqState>) -> Result<Option<serde_json::Value>, String> {
     Ok(qq_info(&state).map(|i| serde_json::json!({"uin": i.uin, "nickname": i.nickname})))
@@ -1233,6 +1249,7 @@ fn main() {
             netease_song_url,
             netease_search,
             qq_set_cookie,
+            qq_import_cookie_file,
             qq_status,
             qq_logout,
             qq_user_playlists,

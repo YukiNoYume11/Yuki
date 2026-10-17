@@ -1388,7 +1388,7 @@ $("btn-speed").addEventListener("click", () => {
 });
 
 /* ==================== 命令 ==================== */
-function execCmd(raw) {
+async function execCmd(raw) {
   const s = raw.trim(); if (!s) return;
   echo("<span class='p'>&gt;</span> " + esc(s));
   const [cmd, ...rest] = s.split(/\s+/); const arg = rest.join(" ");
@@ -1482,6 +1482,17 @@ function execCmd(raw) {
       if (qqLoggedIn && !arg) { echo("<span class='p'>QQ</span> 已登录: <b>" + esc(qqNick || qqUin) + "</b>（qlogout 退出）", "dim"); break; }
       const c = arg.startsWith("cookie ") ? arg.slice(7) : arg;
       if (c) { qqLogin(c); break; }
+      /* 无参数: 优先从浏览器辅助提取的导入文件一键登录 */
+      try {
+        echo("<span class='p'>⏺</span> 检测到 Cookie 导入文件，正在登录 QQ 音乐…", "dim");
+        const prof = await cmInvoke("qq_import_cookie_file");
+        qqLoggedIn = true; qqUin = prof.uin || ""; qqNick = prof.nickname || "";
+        if (prof.cookie) { try { localStorage.setItem("cm_qq_cookie", prof.cookie); } catch (e) {} }
+        echo("<span class='p'>⏺</span> QQ 音乐登录成功: <b>" + esc(qqNick || ("uin " + qqUin)) + "</b>（VIP 曲目与歌单已解锁）", "ok");
+        cmSay("QQ登录成功，" + (qqNick || "欢迎回来"), 3200, true);
+        loadQqPlaylists();
+        break;
+      } catch (e) { /* 无导入文件或已失效 → 显示手动引导 */ }
       echo("<span class='p'>qlogin</span> 导入 QQ 账号：浏览器打开 <b>y.qq.com</b> 登录 → F12 → <b>Network</b> → 刷新页面 → 点任一 y.qq.com 请求 → Headers → 复制 <b>Cookie:</b> 整行的值 → <b>qlogin &lt;cookie&gt;</b>", "dim");
       echo("<span class='p'>提示</span> 不要从 Console 的 document.cookie 复制（拿不到 HttpOnly 的 uin/qqmusic_key）。登录后可播 VIP 曲目并在侧边栏显示 QQ 歌单", "dim");
       break;
