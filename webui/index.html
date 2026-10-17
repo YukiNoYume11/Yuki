@@ -304,7 +304,7 @@
     </div>
 
     <div class="out" id="out">
-      <div class="ln dim">ClaudeMusic v0.5.1 — play 关键词 / quality 音质 / lyric offset 校准 / diag / help</div>
+      <div class="ln dim">ClaudeMusic v0.5.2 — play 关键词 / qlogin QQ导入 / quality 音质 / help</div>
     </div>
 
     <div class="viz-strip">
@@ -698,7 +698,8 @@ async function loadLyrics(track) {
   stopLyrics();
   lrcLines = [];
   window.cmLog && window.cmLog('LYRIC-CALL id=' + (track && track.id) + ' mode=' + lyricMode);
-  if (track && track.id && lyricMode) {
+  /* 歌词仅网易云源(QQ 曲目的 id 不是网易云 id, 会拉错歌词) */
+  if (track && track.id && lyricMode && track.src !== "qq") {
     const lrc = await fetchLrc(track.id);
     window.cmLog && window.cmLog('FETCHLRC got=' + (lrc ? lrc.length : 'null'));
     if (lrc) lrcLines = parseLrc(lrc);
@@ -849,6 +850,82 @@ function doLogout() {
     cmSay("已退出登录", 2600, true);
   });
 }
+
+/* ==================== QQ 音乐登录(Cookie 导入) ==================== */
+let qqLoggedIn = false, qqUin = "", qqNick = "";
+let qqPlaylists = [], cmPlaylists = [];
+async function qqLogin(c) {
+  c = (c || "").trim();
+  if (!c) { cmSay("请先粘贴 Cookie", 2600, true); return; }
+  if (!/uin|wxuin/.test(c)) { echo("<span class='p'>⏺</span> Cookie 里没找到 uin/wxuin，请从 y.qq.com 复制完整 Cookie", "err"); return; }
+  echo("<span class='p'>⏺</span> 正在登录 QQ 音乐…", "dim");
+  try {
+    const prof = await cmInvoke("qq_set_cookie", { cookie: c });
+    try { localStorage.setItem("cm_qq_cookie", c); } catch (e) {}
+    qqLoggedIn = true; qqUin = prof.uin || ""; qqNick = prof.nickname || "";
+    echo("<span class='p'>⏺</span> QQ 音乐登录成功: <b>" + esc(qqNick || ("uin " + qqUin)) + "</b>（VIP 曲目与歌单已解锁）", "ok");
+    cmSay("QQ登录成功，" + (qqNick || "欢迎回来"), 3200, true);
+    loadQqPlaylists();
+  } catch (e) {
+    echo("<span class='p'>⏺</span> QQ 登录失败: " + esc(String(e && e.message || e)), "err");
+    cmSay("QQ Cookie 失效了，重新复制一份", 4200, true);
+  }
+}
+function qqDoLogout() {
+  cmInvoke("qq_logout").then(() => {
+    try { localStorage.removeItem("cm_qq_cookie"); } catch (e) {}
+    qqLoggedIn = false; qqUin = ""; qqNick = ""; qqPlaylists = [];
+    renderSidebarLists();
+    cmSay("已退出 QQ 登录", 2600, true);
+  });
+}
+async function loadQqPlaylists() {
+  try {
+    qqPlaylists = await cmInvoke("qq_user_playlists") || [];
+    renderSidebarLists();
+  } catch (e) {
+    window.cmLog && window.cmLog("QPLAYLIST err " + (e && e.message || e));
+  }
+}
+/* 侧边栏合并渲染: 网易云 + QQ 两个来源的歌单 */
+function renderSidebarLists() {
+  const ne = cmPlaylists || [], qq = qqPlaylists || [];
+  if (!ne.length && !qq.length) {
+    $("sb-list").innerHTML = '<div class="sb-hint">登录后显示「我的歌单」</div>';
+    return;
+  }
+  const sec = (t) => '<div class="sb-sec">' + t + '</div>';
+  const item = (p, src) => '<div class="sb-item' + (p.subscribed ? " sub" : "") + '" data-id="' + p.id + '" data-src="' + src + '"><span class="nm">' + esc(p.name || "未命名") + '</span><span class="cnt">' + (p.trackCount || 0) + '</span></div>';
+  let html = "";
+  const neCreated = ne.filter(p => !p.subscribed), neSubbed = ne.filter(p => p.subscribed);
+  const qqCreated = qq.filter(p => !p.subscribed), qqSubbed = qq.filter(p => p.subscribed);
+  if (neCreated.length) { html += sec("网易云 · 创建"); html += neCreated.map(p => item(p, "netease")).join(""); }
+  if (neSubbed.length) { html += sec("网易云 · 收藏"); html += neSubbed.map(p => item(p, "netease")).join(""); }
+  if (qqCreated.length) { html += sec("QQ音乐 · 创建"); html += qqCreated.map(p => item(p, "qq")).join(""); }
+  if (qqSubbed.length) { html += sec("QQ音乐 · 收藏"); html += qqSubbed.map(p => item(p, "qq")).join(""); }
+  $("sb-list").innerHTML = html;
+  $("sb-list").querySelectorAll(".sb-item").forEach(el => {
+    el.addEventListener("click", () => {
+      const name = el.querySelector(".nm").textContent;
+      if (el.dataset.src === "qq") importQqPlaylist(parseInt(el.dataset.id, 10), name);
+      else importPlaylist(parseInt(el.dataset.id, 10), name);
+    });
+  });
+}
+async function importQqPlaylist(id, name) {
+  if (!id) return;
+  toastLike("导入 QQ 歌单「" + (name || id) + "」…");
+  try {
+    const tracks = await cmInvoke("qq_playlist_detail", { id });
+    if (!tracks || !tracks.length) { echo("<span class='p'>⏺</span> QQ 歌单为空或无法读取", "err"); return; }
+    state.queue = tracks;
+    renderRows(tracks, false);
+    echo("<span class='p'>⏺</span> QQ 歌单「" + esc(name || id) + "」已导入 " + tracks.length + " 首，点任意行播放", "ok");
+    loadTrack(0);
+  } catch (e) {
+    echo("<span class='p'>⏺</span> QQ 歌单导入失败: " + esc(String(e && e.message || e)), "err");
+  }
+}
 async function loadMyPlaylists() {
   try {
     const list = await cmInvoke("netease_user_playlists");
@@ -858,18 +935,8 @@ async function loadMyPlaylists() {
   }
 }
 function renderPlaylists(list) {
-  if (!list || !list.length) { $("sb-list").innerHTML = '<div class="sb-hint">暂无歌单</div>'; return; }
-  const created = list.filter(p => !p.subscribed);
-  const subbed = list.filter(p => p.subscribed);
-  let html = "";
-  const sec = (t) => '<div class="sb-sec">' + t + '</div>';
-  const item = (p) => '<div class="sb-item' + (p.subscribed ? " sub" : "") + '" data-id="' + p.id + '"><span class="nm">' + esc(p.name || "未命名") + '</span><span class="cnt">' + (p.trackCount || 0) + '</span></div>';
-  if (created.length) { html += sec("创建的歌单"); html += created.map(item).join(""); }
-  if (subbed.length) { html += sec("收藏的歌单"); html += subbed.map(item).join(""); }
-  $("sb-list").innerHTML = html;
-  $("sb-list").querySelectorAll(".sb-item").forEach(el => {
-    el.addEventListener("click", () => importPlaylist(parseInt(el.dataset.id, 10), el.querySelector(".nm").textContent));
-  });
+  cmPlaylists = list || [];
+  renderSidebarLists();
 }
 function parsePlaylistId(s) {
   const t = (s || "").trim();
@@ -921,7 +988,23 @@ async function setAudioSrc(t) {
       }
     } catch (e) {}
   }
-  if (window.__CM_IS_TAURI__ && /music\.163\.com|126\.net/.test(rawUrl)) {
+  /* QQ 取链(vkey): 登录后 VIP 曲可播, 同样按音质偏好降级 */
+  if (qqLoggedIn && t.src === "qq" && t.mid) {
+    try {
+      const r = await cmInvoke("qq_song_url", { mid: t.mid, level: qualityKey });
+      if (r && r.url) {
+        rawUrl = r.url;
+        actualLevel = r.level || null;
+        if (r.level && r.level !== qualityKey && QUALITIES.some(q => q.key === r.level)) {
+          toastLike("QQ 音质「" + qualityLabel(qualityKey) + "」不可用，已降为 " + qualityLabel(r.level), "dim");
+        }
+      }
+    } catch (e) {
+      echo("<span class='p'>⏺</span> QQ 取链失败: " + esc(String(e && e.message || e)), "err");
+    }
+  }
+  if (!rawUrl) return null;
+  if (window.__CM_IS_TAURI__ && /music\.163\.com|126\.net|qqmusic\.qq\.com/.test(rawUrl)) {
     try {
       const u = await window.__CM_PROXY__(rawUrl);
       audio.crossOrigin = "anonymous";
@@ -943,9 +1026,9 @@ function setPlayingUI(on) {
 }
 function loadTrack(i) {
   if (!state.queue.length) return;
-  /* 跳过无音源曲目(QQ未登录等), 最多绕队列一圈 */
+  /* 跳过无音源曲目(QQ未登录等), 最多绕队列一圈; QQ 曲目在 QQ 已登录且有 mid 时视为可播 */
   let tries = 0;
-  const hasUrl = (t) => !!(t.outer || t.url || t.url_resolved);
+  const hasUrl = (t) => !!(t.outer || t.url || t.url_resolved || (t.src === "qq" && t.mid && qqLoggedIn));
   while (tries < state.queue.length && !hasUrl(state.queue[(i + tries) % state.queue.length])) tries++;
   if (tries >= state.queue.length) {
     echo("<span class='p'>⏺</span> 队列中没有可播放的曲目（未登录平台仅有元数据）", "err");
@@ -955,9 +1038,9 @@ function loadTrack(i) {
   if (tries > 0) echo("<span class='p'>⏺</span> 已跳过 " + tries + " 首不可播放曲目", "dim");
   state.cur = (i + tries) % state.queue.length;
   const t = state.queue[state.cur];
-  state.seekable = !!t.outer;
+  state.seekable = !!t.outer || (t.src === "qq" && !!t.mid && qqLoggedIn);
   resetSongStats(); fluxHist = [];
-  window.cmLog && window.cmLog("LOAD name=" + t.name + " src=" + String(t.outer || t.url || t.url_resolved).slice(0, 100));
+  window.cmLog && window.cmLog("LOAD name=" + t.name + " src=" + String(t.outer || t.url || t.url_resolved || t.mid || "").slice(0, 100));
   setAudioSrc(t).then((lv) => {
     audio.volume = state.vol;
     audio.play().catch(() => {});
@@ -1177,7 +1260,7 @@ function renderRows(list, isRadio) {
   list.forEach((t, i) => {
     let tag;
     if (isRadio) tag = "● LIVE";
-    else if (t.src === "qq") tag = "QQ·需登录";
+    else if (t.src === "qq") tag = qqLoggedIn ? "QQ" + (t.dt ? " " + fmt(t.dt / 1000) : "") : "QQ·需登录";
     else {
       /* 原生风格标记: VIP/付费/试听 + 时长 */
       const feeTag = t.fee === 1 ? "VIP " : t.fee === 4 ? "付费 " : t.fee === 8 ? "试听 " : "";
@@ -1188,7 +1271,7 @@ function renderRows(list, isRadio) {
     d.className = "row"; d.dataset.i = i;
     d.innerHTML = '<span class="idx">' + String(i+1).padStart(2,"0") + '</span><span class="nm">' + esc(t.name) + '</span><span class="ar">' + esc(t.artist || "") + '</span><span class="tg' + (isRadio ? " live" : "") + '">' + tag + '</span>';
     d.addEventListener("click", () => {
-      if (t.src === "qq") { echo("<span class='p'>⏺</span> QQ 音乐播放需先登录（登录功能开发中）", "err"); cmSay("QQ的要登录才行，先听网易云版本？", 3200, true); return; }
+      if (t.src === "qq" && !qqLoggedIn) { echo("<span class='p'>⏺</span> QQ 音乐曲目需先导入 QQ 账号（qlogin 命令）", "err"); cmSay("QQ的要登录才行，qlogin 导入账号后就能播", 3200, true); return; }
       loadTrack(i);
     });
     out.appendChild(d);
@@ -1386,7 +1469,7 @@ function execCmd(raw) {
     case "demo": state.queue = DEMO_TRACKS.slice(); renderRows(DEMO_TRACKS, false); loadTrack(0); break;
     case "diag": doDiag(); break;
     case "help":
-      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · quality [standard|exhigh|lossless|hires|jymaster] · mood auto|欢快|平静|忧郁|高潮 · lyric on|off|offset ±秒 · login [cookie 值] · logout · my · playlist &lt;url|id&gt; · demo · diag · clear", "dim"); break;
+      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · quality [standard|exhigh|lossless|hires|jymaster] · mood auto|欢快|平静|忧郁|高潮 · lyric on|off|offset ±秒 · login [cookie 值] · logout · qlogin &lt;cookie&gt; · qlogout · qmy · my · playlist &lt;url|id&gt; · demo · diag · clear", "dim"); break;
     case "clear":
       document.querySelectorAll("#out > .ln, #out > .row").forEach(el => el.remove());
       break;
@@ -1395,6 +1478,19 @@ function execCmd(raw) {
       else { qrRiskTries = 0; startQrLogin(); }
       break;
     case "logout": doLogout(); break;
+    case "qlogin": {
+      if (qqLoggedIn && !arg) { echo("<span class='p'>QQ</span> 已登录: <b>" + esc(qqNick || qqUin) + "</b>（qlogout 退出）", "dim"); break; }
+      const c = arg.startsWith("cookie ") ? arg.slice(7) : arg;
+      if (c) { qqLogin(c); break; }
+      echo("<span class='p'>qlogin</span> 导入 QQ 账号：浏览器打开 <b>y.qq.com</b> 登录 → F12 → Application → Cookies → 复制整段 Cookie → <b>qlogin &lt;cookie&gt;</b>", "dim");
+      echo("<span class='p'>提示</span> 登录后可播 VIP 曲目（需绿钻账号）并在侧边栏显示 QQ 歌单", "dim");
+      break;
+    }
+    case "qlogout": qqDoLogout(); break;
+    case "qmy":
+      if (qqLoggedIn) loadQqPlaylists();
+      else cmSay("先 qlogin 导入 QQ 账号", 3000, true);
+      break;
     case "my":
       if (cmLoggedIn) loadMyPlaylists();
       else cmSay("请先 login 登录", 2600, true);
@@ -1485,7 +1581,7 @@ $("pl-input").addEventListener("keydown", (e) => {
 });
 $("sb-toggle").addEventListener("click", () => document.body.classList.toggle("sb-collapsed"));
 
-/* 启动时恢复登录态 */
+/* 启动时恢复登录态(网易云 + QQ) */
 (function restoreLogin() {
   if (!window.__CM_IS_TAURI__) { showLoggedOut(); return; }
   let c = null;
@@ -1494,6 +1590,14 @@ $("sb-toggle").addEventListener("click", () => document.body.classList.toggle("s
     cmInvoke("netease_set_cookie", { cookie: c }).then(() => refreshLogin()).catch(() => showLoggedOut());
   } else {
     showLoggedOut();
+  }
+  let qc = null;
+  try { qc = localStorage.getItem("cm_qq_cookie"); } catch (e) {}
+  if (qc) {
+    cmInvoke("qq_set_cookie", { cookie: qc }).then((prof) => {
+      qqLoggedIn = true; qqUin = (prof && prof.uin) || ""; qqNick = (prof && prof.nickname) || "";
+      loadQqPlaylists();
+    }).catch(() => { try { localStorage.removeItem("cm_qq_cookie"); } catch (e) {} });
   }
 })();
 

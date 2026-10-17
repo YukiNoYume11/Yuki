@@ -896,12 +896,306 @@ fn netease_song_url(app: tauri::AppHandle, state: tauri::State<'_, LoginState>, 
     }
 }
 
+// ==================== QQ 音乐(Cookie 导入登录) ====================
+// 账号导入: 用户在 https://y.qq.com 登录后复制整段 Cookie(F12→Application→Cookies)粘贴导入。
+// 关键 cookie: uin(微信登录为 wxuin + login_type=2) / qqmusic_key 或 qm_keyst(播放凭证) / p_skey。
+// 歌单: c.y.qq.com 的 fcg 接口; 取链: u.y.qq.com musicu.fcg vkey.GetVkeyServer(VIP 曲需 VIP cookie)。
+
+struct QqInfo {
+    cookie: String,
+    uin: String,
+    key: String,
+    nickname: String,
+}
+struct QqState(std::sync::Mutex<Option<QqInfo>>);
+
+fn qq_info(state: &tauri::State<'_, QqState>) -> Option<QqInfo> {
+    state.0.lock().unwrap().as_ref().map(|i| QqInfo {
+        cookie: i.cookie.clone(),
+        uin: i.uin.clone(),
+        key: i.key.clone(),
+        nickname: i.nickname.clone(),
+    })
+}
+
+/// 解析 QQ cookie 串: 返回 (uin, qqmusic_key)
+fn qq_parse_cookie(cookie: &str) -> (String, String) {
+    let mut map = std::collections::HashMap::new();
+    for kv in cookie.split(';') {
+        let kv = kv.trim();
+        if let Some(eq) = kv.find('=') {
+            map.insert(kv[..eq].trim().to_string(), kv[eq + 1..].trim().to_string());
+        }
+    }
+    let login_type = map.get("login_type").map(|s| s.as_str()).unwrap_or("");
+    let raw_uin = if login_type == "2" {
+        map.get("wxuin").cloned().unwrap_or_default()
+    } else {
+        map.get("uin").cloned().unwrap_or_default()
+    };
+    let uin: String = raw_uin.chars().filter(|c| c.is_ascii_digit()).collect();
+    let key = map
+        .get("qqmusic_key")
+        .or_else(|| map.get("qm_keyst"))
+        .cloned()
+        .unwrap_or_default();
+    (uin, key)
+}
+
+/// GET c.y.qq.com 系 fcg 接口(JSON)
+fn qq_fcg_get(path: &str, query: &[(&str, String)], cookie: &str) -> Result<serde_json::Value, String> {
+    let qs: Vec<(String, String)> = query.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+    let resp = get_client()
+        .get(format!("https://c.y.qq.com/{path}"))
+        .query(&qs)
+        .header("Referer", "https://y.qq.com/portal/profile.html")
+        .header("Cookie", cookie)
+        .send()
+        .map_err(|e| e.to_string())?;
+    let text = resp.text().map_err(|e| e.to_string())?;
+    serde_json::from_str(&text).map_err(|e| format!("fcg json 解析失败: {e} body={}", &text[..text.len().min(200)]))
+}
+
+/// POST u.y.qq.com musicu.fcg(统一网关)
+fn qq_musicu(cookie: &str, body: serde_json::Value) -> Result<serde_json::Value, String> {
+    let resp = get_client()
+        .post("https://u.y.qq.com/cgi-bin/musicu.fcg")
+        .header("Referer", "https://y.qq.com/")
+        .header("Cookie", cookie)
+        .form(&[("data", body.to_string())])
+        .send()
+        .map_err(|e| e.to_string())?;
+    let text = resp.text().map_err(|e| e.to_string())?;
+    serde_json::from_str(&text).map_err(|e| format!("musicu json 解析失败: {e} body={}", &text[..text.len().min(200)]))
+}
+
+/// 拉取用户创建的歌单(同时用作登录态校验; data.hostname 即昵称)
+fn qq_fetch_created(cookie: &str, uin: &str) -> Result<serde_json::Value, String> {
+    qq_fcg_get(
+        "rsc/fcgi-bin/fcg_user_created_diss",
+        &[
+            ("hostUin", "0".into()),
+            ("hostuin", uin.to_string()),
+            ("sin", "0".into()),
+            ("size", "200".into()),
+            ("g_tk", "5381".into()),
+            ("loginUin", "0".into()),
+            ("format", "json".into()),
+            ("inCharset", "utf8".into()),
+            ("outCharset", "utf-8".into()),
+            ("notice", "0".into()),
+            ("platform", "yqq.json".into()),
+            ("needNewCode", "0".into()),
+        ],
+        cookie,
+    )
+}
+
+#[tauri::command]
+fn qq_set_cookie(app: tauri::AppHandle, state: tauri::State<'_, QqState>, cookie: String) -> Result<serde_json::Value, String> {
+    let cookie = cookie.trim().to_string();
+    if cookie.is_empty() {
+        return Err("cookie 为空".into());
+    }
+    let (uin, key) = qq_parse_cookie(&cookie);
+    if uin.is_empty() {
+        return Err("cookie 中未找到 uin/wxuin".into());
+    }
+    log_msg(&app, &format!("QLOGIN set_cookie uin={uin} keyLen={}", key.len()));
+    let j = qq_fetch_created(&cookie, &uin).map_err(|e| format!("校验失败: {e}"))?;
+    let code = j["code"].as_i64().unwrap_or(-1);
+    if code != 0 {
+        return Err(format!("cookie 无效或已过期(code={code})"));
+    }
+    let nickname = j["data"]["hostname"].as_str().unwrap_or("").to_string();
+    log_msg(&app, &format!("QLOGIN ok uin={uin} nick={nickname}"));
+    *state.0.lock().unwrap() = Some(QqInfo { cookie, uin: uin.clone(), key, nickname: nickname.clone() });
+    Ok(serde_json::json!({"uin": uin, "nickname": nickname}))
+}
+
+#[tauri::command]
+fn qq_status(state: tauri::State<'_, QqState>) -> Result<Option<serde_json::Value>, String> {
+    Ok(qq_info(&state).map(|i| serde_json::json!({"uin": i.uin, "nickname": i.nickname})))
+}
+
+#[tauri::command]
+fn qq_logout(state: tauri::State<'_, QqState>) -> Result<(), String> {
+    *state.0.lock().unwrap() = None;
+    Ok(())
+}
+
+#[tauri::command]
+fn qq_user_playlists(app: tauri::AppHandle, state: tauri::State<'_, QqState>) -> Result<serde_json::Value, String> {
+    let info = qq_info(&state).ok_or("QQ 未登录")?;
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    // 创建的歌单(dirid=201 即「我喜欢」)
+    if let Ok(j) = qq_fetch_created(&info.cookie, &info.uin) {
+        for p in j["data"]["disslist"].as_array().cloned().unwrap_or_default() {
+            let tid = p["tid"].as_i64().unwrap_or(0);
+            if tid == 0 {
+                continue;
+            }
+            out.push(serde_json::json!({
+                "id": tid,
+                "name": p["diss_name"].as_str().unwrap_or("未命名"),
+                "trackCount": p["song_cnt"].as_i64().unwrap_or(0),
+                "subscribed": false,
+                "src": "qq",
+            }));
+        }
+    }
+    // 收藏的歌单
+    if let Ok(j) = qq_fcg_get(
+        "fav/fcgi-bin/fcg_get_profile_order_asset.fcg",
+        &[
+            ("ct", "20".into()),
+            ("cid", "205360956".into()),
+            ("userid", info.uin.clone()),
+            ("reqtype", "3".into()),
+            ("sin", "0".into()),
+            ("ein", "200".into()),
+            ("format", "json".into()),
+            ("outCharset", "utf-8".into()),
+        ],
+        &info.cookie,
+    ) {
+        for p in j["data"]["cdlist"].as_array().cloned().unwrap_or_default() {
+            let tid = p["dissid"].as_i64().unwrap_or(0);
+            if tid == 0 {
+                continue;
+            }
+            out.push(serde_json::json!({
+                "id": tid,
+                "name": p["diss_name"].as_str().or_else(|| p["dissname"].as_str()).unwrap_or("未命名"),
+                "trackCount": p["song_cnt"].as_i64().or_else(|| p["songnum"].as_i64()).unwrap_or(0),
+                "subscribed": true,
+                "src": "qq",
+            }));
+        }
+    }
+    log_msg(&app, &format!("QPLAYLIST user count={}", out.len()));
+    Ok(serde_json::json!(out))
+}
+
+#[tauri::command]
+fn qq_playlist_detail(app: tauri::AppHandle, state: tauri::State<'_, QqState>, id: i64) -> Result<serde_json::Value, String> {
+    let info = qq_info(&state).ok_or("QQ 未登录")?;
+    let j = qq_fcg_get(
+        "qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg",
+        &[
+            ("type", "1".into()),
+            ("utf8", "1".into()),
+            ("disstid", id.to_string()),
+            ("loginUin", "0".into()),
+            ("format", "json".into()),
+        ],
+        &info.cookie,
+    )?;
+    let songs = j["cdlist"][0]["songlist"].as_array().cloned().unwrap_or_default();
+    log_msg(&app, &format!("QPLAYLIST detail id={id} tracks={}", songs.len()));
+    let list: Vec<serde_json::Value> = songs
+        .into_iter()
+        .filter_map(|t| {
+            let mid = t["mid"].as_str()?.to_string();
+            let artist = t["singer"]
+                .as_array()
+                .map(|ar| {
+                    ar.iter()
+                        .filter_map(|a| a["name"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("/")
+                })
+                .unwrap_or_default();
+            Some(serde_json::json!({
+                "mid": mid,
+                "id": t["id"],
+                "name": t["name"],
+                "artist": artist,
+                "album": t["album"]["name"],
+                "dt": t["interval"].as_i64().unwrap_or(0) * 1000,
+                "src": "qq",
+            }))
+        })
+        .collect();
+    Ok(serde_json::json!(list))
+}
+
+/// QQ 取链: vkey.GetVkeyServer, 按音质偏好给候选文件名, 命中首个非空 purl
+/// filename 格式: 前缀+songmid+media_mid+扩展名(media_mid 未知时等于 songmid; 两种写法都试)
+#[tauri::command]
+fn qq_song_url(app: tauri::AppHandle, state: tauri::State<'_, QqState>, mid: String, level: Option<String>) -> Result<serde_json::Value, String> {
+    let info = qq_info(&state).ok_or("QQ 未登录")?;
+    let want = level.unwrap_or_else(|| "exhigh".into());
+    // (文件名前缀, 扩展名, 对应音质档位)
+    let cands: Vec<(&str, &str, &str)> = match want.as_str() {
+        "standard" => vec![("M500", ".mp3", "standard"), ("C400", ".m4a", "standard")],
+        "lossless" | "hires" | "jymaster" => vec![
+            ("F000", ".flac", "lossless"),
+            ("M800", ".mp3", "exhigh"),
+            ("M500", ".mp3", "standard"),
+        ],
+        _ => vec![("M800", ".mp3", "exhigh"), ("M500", ".mp3", "standard")],
+    };
+    let mut filenames: Vec<String> = Vec::new();
+    let mut tags: Vec<&str> = Vec::new();
+    for (pre, ext, lv) in &cands {
+        filenames.push(format!("{pre}{mid}{mid}{ext}")); // media_mid=songmid 的完整写法
+        filenames.push(format!("{pre}{mid}{ext}"));       // 兼容单 mid 写法
+        tags.push(lv);
+        tags.push(lv);
+    }
+    let body = serde_json::json!({
+        "req_0": {
+            "module": "vkey.GetVkeyServer",
+            "method": "CgiGetVkey",
+            "param": {
+                "filename": filenames,
+                "guid": "2796982635",
+                "songmid": vec![mid.clone(); filenames.len()],
+                "songtype": vec![0; filenames.len()],
+                "uin": info.uin,
+                "loginflag": 1,
+                "platform": "20"
+            }
+        },
+        "comm": {
+            "uin": info.uin,
+            "format": "json",
+            "ct": 19,
+            "cv": 0,
+            "authst": info.key
+        }
+    });
+    let j = qq_musicu(&info.cookie, body)?;
+    let code = j["req_0"]["code"].as_i64().unwrap_or(-1);
+    let infos = j["req_0"]["data"]["midurlinfo"].as_array().cloned().unwrap_or_default();
+    let sips = j["req_0"]["data"]["sip"].as_array().cloned().unwrap_or_default();
+    let domain = sips
+        .iter()
+        .filter_map(|s| s.as_str())
+        .find(|s| !s.starts_with("http://ws"))
+        .or_else(|| sips.first().and_then(|s| s.as_str()))
+        .unwrap_or("https://isure.stream.qqmusic.qq.com/")
+        .to_string();
+    for (i, it) in infos.iter().enumerate() {
+        let purl = it["purl"].as_str().unwrap_or("");
+        if !purl.is_empty() {
+            let lv = tags.get(i).copied().unwrap_or("exhigh");
+            log_msg(&app, &format!("QSONGURL mid={mid} want={want} hit={lv} idx={i}"));
+            return Ok(serde_json::json!({"url": format!("{domain}{purl}"), "level": lv}));
+        }
+    }
+    log_msg(&app, &format!("QSONGURL mid={mid} want={want} 无可用 purl code={code}(非VIP曲或需更高权限)"));
+    Err("QQ 未返回可播链接(可能需 VIP 或曲目无版权)".into())
+}
+
 fn main() {
     for var in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"] {
         std::env::remove_var(var);
     }
     tauri::Builder::default()
         .manage(LoginState(std::sync::Mutex::new(None)))
+        .manage(QqState(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             app_log,
             netease_qr_key,
@@ -913,7 +1207,13 @@ fn main() {
             netease_user_playlists,
             netease_playlist_detail,
             netease_song_url,
-            netease_search
+            netease_search,
+            qq_set_cookie,
+            qq_status,
+            qq_logout,
+            qq_user_playlists,
+            qq_playlist_detail,
+            qq_song_url
         ])
         // 异步协议处理器: 网络请求在独立线程执行, 不阻塞 UI/WebView 线程
         .register_asynchronous_uri_scheme_protocol("proxy", |ctx, request, responder| {

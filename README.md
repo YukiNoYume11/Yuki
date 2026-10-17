@@ -26,6 +26,7 @@ D:\ClaudeMusic\
 - **原生级搜索（v0.5.0）**：主通道升级为 weapi cloudsearch（官方客户端同款排序，带热度/VIP/时长字段）；本地再融合相关度评分——歌名精确/前缀匹配加权、歌手命中加权、未明确指定时 Live/翻唱/伴奏降权、热度加权、原生顺序 tie-break
 - **音质选择（v0.5.0）**：`quality` 查看，`quality standard|exhigh|lossless|hires|jymaster` 切换（无损/Hi-Res/母带需 VIP/SVIP，登录后生效）；取链按偏好逐级降级保证可播，播放条显示实际音质徽标；选择持久化
 - **歌词同步优化（v0.5.0）**：同步引擎由 timeupdate（约 4Hz）改为 120ms 定时器驱动；支持 LRC `[offset:]` 元标签与一行多时间戳；`lyric offset ±秒` 手动校准并持久化
+- **QQ 音乐账号导入（v0.5.2）**：`qlogin <cookie>` 粘贴 y.qq.com 整段 Cookie 导入（微信登录自动识别 wxuin）；登录后 QQ 搜索结果的 VIP 曲目可播（vkey 取链，按 quality 档位降级），侧边栏显示 QQ 创建/收藏歌单（含「我喜欢」），点击即导入播放；`qlogout` 退出、`qmy` 刷新歌单
 - UI：Claude Code 风格（暗色 #1F1E1D / 赭橙 #D97757 / 等宽字体 / 命令输入栏）
 - 吉祥物：Claude 像素形象浮动层，播放事件驱动交互（走位/气泡/情绪律动）
 
