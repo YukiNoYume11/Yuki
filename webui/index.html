@@ -246,13 +246,29 @@
   .qr-box { background: #fff; padding: 8px; border-radius: 6px; }
   .qr-box svg { display: block; }
   .qr-status { color: var(--dim); font-size: 12px; text-align: center; min-height: 18px; }
+
+  /* ===== 主题体系(DIY 入口): 全部颜色走 CSS 变量, 新增主题=新增一组变量覆盖 ===== */
+  html[data-theme="light"] {
+    --bg: #F4F1EC; --win: #FBFAF7; --panel: #F0EDE7; --panel2: #E7E3DB;
+    --border: #D9D3C8; --text: #2B2825; --dim: #6E6860; --faint: #A39D93;
+    --accent: #C05F3C; --accent-dim: #A84E2E; --accent-dark: #8F4527;
+    --k1: #C07040; --k2: #C04538; --k3: #4A6E92; --ok: #4E8A52;
+  }
+  html[data-theme="light"] body { background: #EAE6DE; }
+  html[data-theme="light"] .term { border-color: #CFC9BD; }
+  html[data-theme="light"] .titlebar { background: #F0EDE7; }
+  html[data-theme="light"] #sidebar { background: var(--panel); }
+  html[data-theme="light"] .btn.main { color: #FBFAF7; }
 </style>
 </head>
 <body>
 <aside id="sidebar">
   <div class="sb-head">
     <span class="sb-title">♪ 歌单</span>
-    <button class="sb-btn" id="sb-toggle" title="折叠侧栏">&laquo;</button>
+    <span style="display:flex;gap:6px">
+      <button class="sb-btn" id="btn-theme" title="切换主题（DIY 入口）">◐</button>
+      <button class="sb-btn" id="sb-toggle" title="折叠侧栏">&laquo;</button>
+    </span>
   </div>
   <div class="sb-login" id="sb-login">
     <button class="sb-btn" id="btn-login">扫码登录</button>
@@ -295,8 +311,8 @@
       </span>
       <div>
         <h1>ClaudeMusic</h1>
-        <div class="meta">私人版 · 非商用 · 情绪引擎已就绪</div>
-        <div class="path">~/音乐</div>
+        <div class="meta">Claude code·小梦想睡觉</div>
+        <div class="path">Yuki</div>
       </div>
       <div class="right">
         情绪: <b id="mood-name">待机</b> <span id="mood-src"></span><br>
@@ -1269,7 +1285,11 @@ function renderRows(list, isRadio) {
   list.forEach((t, i) => {
     let tag;
     if (isRadio) tag = "● LIVE";
-    else if (t.src === "qq") tag = qqLoggedIn ? "QQ" + (t.dt ? " " + fmt(t.dt / 1000) : "") : "QQ·需登录";
+    else if (t.src === "qq") {
+      /* QQ 音质标记: SQ=无损可用 / HQ=320k 可用 */
+      const q = t.hasSQ ? " SQ" : t.hasHQ ? " HQ" : "";
+      tag = qqLoggedIn ? "QQ" + q + (t.dt ? " " + fmt(t.dt / 1000) : "") : "QQ·需登录";
+    }
     else {
       /* 原生风格标记: VIP/付费/试听 + 时长 */
       const feeTag = t.fee === 1 ? "VIP " : t.fee === 4 ? "付费 " : t.fee === 8 ? "试听 " : "";
@@ -1458,14 +1478,14 @@ async function execCmd(raw) {
     case "quality": {
       if (!arg) {
         const cur = QUALITIES.find(q => q.key === qualityKey);
-        echo("<span class='p'>音质</span> 当前: <b>" + cur.label + "</b>" + (cmLoggedIn ? "" : "（未登录，仅登录后生效）"), "dim");
-        echo("可用档位: " + QUALITIES.map(q => q.key + (q.vip ? "(VIP)" : "")).join(" · ") + " — 用法: quality <档位>", "dim");
+        echo("<span class='p'>音质</span> 当前: <b>" + cur.label + "</b>（对网易云 + QQ 双平台同时生效）", "dim");
+        echo("可用档位: " + QUALITIES.map(q => q.key + (q.vip ? "(VIP)" : "")).join(" · ") + " — 用法: quality <档位>；QQ 列表中 SQ=可无损 HQ=可320k", "dim");
         break;
       }
       const q = QUALITIES.find(x => x.key === arg.toLowerCase());
       if (!q) { cmSay("可用档位: " + QUALITIES.map(x => x.key).join(" / "), 3200, true); break; }
-      if (q.vip && !cmLoggedIn) {
-        echo("<span class='p'>⏺</span> 「" + q.label + "」需要网易云 VIP/SVIP，请先 login", "err");
+      if (q.vip && !cmLoggedIn && !qqLoggedIn) {
+        echo("<span class='p'>⏺</span> 「" + q.label + "」需要 VIP/SVIP（网易 login 或 QQ qlogin 任一即可）", "err");
         cmSay("这档要会员，登录后再切", 3200, true);
         break;
       }
@@ -1600,6 +1620,18 @@ $("pl-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") { const pid = parsePlaylistId(e.target.value); if (pid) { importPlaylist(pid); e.target.value = ""; } }
 });
 $("sb-toggle").addEventListener("click", () => document.body.classList.toggle("sb-collapsed"));
+
+/* ===== 主题切换(预留 DIY 入口): dark/light 循环, localStorage 持久化 ===== */
+let themeCur = localStorage.getItem("cm_theme") || "dark";
+function applyTheme() { document.documentElement.dataset.theme = themeCur; }
+applyTheme();
+$("btn-theme").addEventListener("click", () => {
+  themeCur = themeCur === "dark" ? "light" : "dark";
+  try { localStorage.setItem("cm_theme", themeCur); } catch (e) {}
+  applyTheme();
+  cmSay(themeCur === "light" ? "浅色主题" : "暗色主题", 2200, true);
+  echo("<span class='p'>◐</span> 主题 → " + themeCur + "（主题 DIY 入口已预留，后续可在此扩展自定义配色）", "dim");
+});
 
 /* 启动时恢复登录态(网易云 + QQ) */
 (function restoreLogin() {

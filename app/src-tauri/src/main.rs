@@ -1161,6 +1161,9 @@ fn qq_playlist_detail(app: tauri::AppHandle, state: tauri::State<'_, QqState>, i
                 "album": t["albumname"].as_str().or_else(|| t["album"]["name"].as_str()).unwrap_or(""),
                 "dt": t["interval"].as_i64().unwrap_or(0) * 1000,
                 "src": "qq",
+                // 可用音质(字节数>0 即存在该格式): 供列表标注 SQ/HQ 与取链参考
+                "hasHQ": t["size320"].as_i64().unwrap_or(0) > 0,
+                "hasSQ": t["sizeflac"].as_i64().unwrap_or(0) > 0 || t["sizeape"].as_i64().unwrap_or(0) > 0,
             }))
         })
         .collect();
