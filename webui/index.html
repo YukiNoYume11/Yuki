@@ -211,6 +211,14 @@
     display: flex; flex-direction: column; overflow: hidden;
   }
   body.sb-collapsed #sidebar { display: none; }
+  /* 侧栏收起后的悬浮展开把手(收起时把手也藏在侧栏里会死锁, 故独立悬浮) */
+  #sb-open {
+    display: none; position: fixed; left: 0; top: 50%; transform: translateY(-50%); z-index: 60;
+    background: var(--panel); color: var(--accent); border: 1px solid var(--border); border-left: none;
+    border-radius: 0 8px 8px 0; padding: 18px 7px; cursor: pointer; font-family: var(--mono); font-size: 14px;
+  }
+  #sb-open:hover { background: var(--panel2); }
+  body.sb-collapsed #sb-open { display: block; }
   #sidebar .sb-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
   #sidebar .sb-title { color: var(--accent); font-size: 13px; letter-spacing: 1px; }
   .sb-btn {
@@ -314,6 +322,7 @@
     <div class="sb-hint">登录后显示「我的歌单」</div>
   </div>
 </aside>
+<button id="sb-open" title="展开歌单栏">&raquo;</button>
 <div class="term">
   <div class="titlebar">
     <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
@@ -345,7 +354,7 @@
     </div>
 
     <div class="out" id="out">
-      <div class="ln dim">YukiMusic v1.0.1 — play 关键词 / qlogin QQ导入 / quality 音质 / help</div>
+      <div class="ln dim">YukiMusic v1.0.2 — play 关键词 / qlogin QQ导入 / quality 音质 / help</div>
     </div>
 
     <div class="viz-strip">
@@ -1679,6 +1688,7 @@ $("pl-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") { const pid = parsePlaylistId(e.target.value); if (pid) { importPlaylist(pid); e.target.value = ""; } }
 });
 $("sb-toggle").addEventListener("click", () => document.body.classList.toggle("sb-collapsed"));
+$("sb-open").addEventListener("click", () => document.body.classList.remove("sb-collapsed"));
 
 /* ===== 主题切换(DIY 入口): dark/light/transfish 循环, localStorage 持久化 ===== */
 const THEMES = [
