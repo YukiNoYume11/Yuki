@@ -191,7 +191,78 @@ fn clamp_audio_range(range: &Option<String>, is_audio_file: bool) -> Option<Stri
     }
 }
 
+/// 本地音频文件服务: local://<路径> 经代理同源供 <audio> 播放(支持 Range, 仅放行音频扩展名)
+fn serve_local_file(app: &tauri::AppHandle, raw_path: &str, range: &Option<String>) -> Response<Vec<u8>> {
+    let p = std::path::Path::new(raw_path);
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let ct = match ext.as_str() {
+        "mp3" => "audio/mpeg",
+        "flac" => "audio/flac",
+        "m4a" => "audio/mp4",
+        "ogg" => "audio/ogg",
+        "wav" => "audio/wav",
+        "aac" => "audio/aac",
+        _ => {
+            log_msg(app, &format!("LOCAL 403 非音频扩展名: {raw_path}"));
+            return Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body("not an audio file".as_bytes().to_vec())
+                .unwrap();
+        }
+    };
+    let data = match std::fs::read(p) {
+        Ok(d) => d,
+        Err(e) => {
+            log_msg(app, &format!("LOCAL 404 {raw_path}: {e}"));
+            return Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(format!("file not found: {e}").into_bytes())
+                .unwrap();
+        }
+    };
+    let total = data.len() as u64;
+    log_msg(app, &format!("LOCAL serve {} bytes={} range={:?}", &raw_path[..raw_path.len().min(80)], total, range));
+    // Range 分片(本地磁盘快, 按请求原样响应, 不再钳制)
+    if let Some(r) = range {
+        let s = r.trim().trim_start_matches("bytes=");
+        let mut it = s.split('-');
+        let start: u64 = it.next().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+        let end: u64 = it
+            .next()
+            .and_then(|v| v.trim().parse().ok())
+            .map(|e: u64| e.min(total.saturating_sub(1)))
+            .unwrap_or(total.saturating_sub(1));
+        if start >= total || end < start {
+            return Response::builder().status(StatusCode::RANGE_NOT_SATISFIABLE).body(Vec::new()).unwrap();
+        }
+        let body = data[start as usize..=(end as usize)].to_vec();
+        return Response::builder()
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header("Access-Control-Allow-Origin", "*")
+            .header("Content-Type", ct)
+            .header("Accept-Ranges", "bytes")
+            .header("Content-Range", format!("bytes {start}-{end}/{total}"))
+            .body(body)
+            .unwrap();
+    }
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Content-Type", ct)
+        .header("Accept-Ranges", "bytes")
+        .body(data)
+        .unwrap()
+}
+
 fn handle_proxy(app: tauri::AppHandle, target: String, range: Option<String>) -> Response<Vec<u8>> {
+    // 本地文件通道: local://<完整路径>(前端 encodeURIComponent 后经 ?u= 解码到达)
+    if let Some(local_path) = target.strip_prefix("local://") {
+        return serve_local_file(&app, local_path, &range);
+    }
     let allowed = url::Url::parse(&target)
         .ok()
         .and_then(|u| u.host_str().map(|h| h.to_string()))
@@ -1336,6 +1407,22 @@ fn qq_lyric(app: tauri::AppHandle, state: tauri::State<'_, QqState>, mid: String
     Ok(serde_json::json!({"lyric": lyric, "trans": trans}))
 }
 
+/// 读取本地音频的同目录同名 .lrc 歌词(UTF-8/GBK 自适应)
+#[tauri::command]
+fn local_lyric(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    let lrc = std::path::Path::new(&path).with_extension("lrc");
+    let bytes = std::fs::read(&lrc).map_err(|_| "无同名 .lrc 歌词文件".to_string())?;
+    let text = match String::from_utf8(bytes.clone()) {
+        Ok(s) => s,
+        Err(_) => {
+            let (s, _, _) = encoding_rs::GBK.decode(&bytes);
+            s.into_owned()
+        }
+    };
+    log_msg(&app, &format!("LOCAL lyric bytes={}", text.len()));
+    Ok(text)
+}
+
 fn main() {
     for var in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"] {
         std::env::remove_var(var);
@@ -1346,6 +1433,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_log,
             open_logs,
+            local_lyric,
             netease_qr_key,
             netease_qr_svg,
             netease_qr_check,

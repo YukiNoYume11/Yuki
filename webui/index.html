@@ -354,7 +354,7 @@
     </div>
 
     <div class="out" id="out">
-      <div class="ln dim">YukiMusic v1.0.4 — play 关键词 / qlogin QQ导入 / quality 音质 / help</div>
+      <div class="ln dim">YukiMusic v1.1.0 — play 关键词 / qlogin QQ导入 / quality 音质 / help</div>
     </div>
 
     <div class="viz-strip">
@@ -751,8 +751,13 @@ async function loadLyrics(track) {
   lrcLines = [];
   window.cmLog && window.cmLog('LYRIC-CALL id=' + (track && track.id) + ' mode=' + lyricMode + ' src=' + (track && track.src));
   let lrcSource = "";
-  /* QQ 歌词: 走 Rust qq_lyric(fcg_query_lyric_new, base64 解码在服务端完成) */
-  if (track && lyricMode && track.src === "qq" && track.mid && window.__CM_IS_TAURI__) {
+  /* 本地文件: 同目录同名 .lrc */
+  if (track && lyricMode && track.src === "local" && track.localPath && window.__CM_IS_TAURI__) {
+    try {
+      const lrc = await cmInvoke("local_lyric", { path: track.localPath });
+      if (lrc) { lrcLines = parseLrc(lrc); lrcSource = "本地歌词"; }
+    } catch (e) {}
+  } else if (track && lyricMode && track.src === "qq" && track.mid && window.__CM_IS_TAURI__) {
     try {
       const r = await cmInvoke("qq_lyric", { mid: track.mid });
       if (r && r.lyric) { lrcLines = parseLrc(r.lyric); lrcSource = "QQ歌词"; }
@@ -1071,6 +1076,18 @@ async function setAudioSrc(t) {
     }
   }
   if (!rawUrl) return null;
+  /* 本地文件: local:// 通道(经代理同源, Rust 侧读盘+Range) */
+  if (window.__CM_IS_TAURI__ && t.localPath) {
+    try {
+      const u = await window.__CM_PROXY__("local://" + t.localPath);
+      audio.crossOrigin = "anonymous";
+      audio.src = u;
+      return actualLevel;
+    } catch (e) {
+      echo("<span class='p'>⏺</span> 本地文件读取失败: " + esc(String(e && e.message || e)), "err");
+      return null;
+    }
+  }
   /* 音频必须全部走代理(同源 proxy.localhost): 直连跨域会污染 Web Audio 图导致无声但进度条照走 */
   if (window.__CM_IS_TAURI__ && /music\.163\.com|126\.net|qq\.com/.test(rawUrl)) {
     try {
@@ -1096,7 +1113,7 @@ function loadTrack(i) {
   if (!state.queue.length) return;
   /* 跳过无音源曲目(QQ未登录等), 最多绕队列一圈; QQ 曲目在 QQ 已登录且有 mid 时视为可播 */
   let tries = 0;
-  const hasUrl = (t) => !!(t.outer || t.url || t.url_resolved || (t.src === "qq" && t.mid && qqLoggedIn));
+  const hasUrl = (t) => !!(t.outer || t.url || t.url_resolved || t.localPath || (t.src === "qq" && t.mid && qqLoggedIn));
   while (tries < state.queue.length && !hasUrl(state.queue[(i + tries) % state.queue.length])) tries++;
   if (tries >= state.queue.length) {
     echo("<span class='p'>⏺</span> 队列中没有可播放的曲目（未登录平台仅有元数据）", "err");
@@ -1106,7 +1123,7 @@ function loadTrack(i) {
   if (tries > 0) echo("<span class='p'>⏺</span> 已跳过 " + tries + " 首不可播放曲目", "dim");
   state.cur = (i + tries) % state.queue.length;
   const t = state.queue[state.cur];
-  state.seekable = !!t.outer || (t.src === "qq" && !!t.mid && qqLoggedIn);
+  state.seekable = !!t.outer || !!t.localPath || (t.src === "qq" && !!t.mid && qqLoggedIn);
   resetSongStats(); fluxHist = [];
   window.cmLog && window.cmLog("LOAD name=" + t.name + " src=" + String(t.outer || t.url || t.url_resolved || t.mid || "").slice(0, 100));
   /* 音质可视化: 取链期间按目标档位预显(pending 灰), 命中后显示实际档位 */
@@ -1367,6 +1384,7 @@ function renderRows(list, isRadio) {
   list.forEach((t, i) => {
     let tag;
     if (isRadio) tag = "● LIVE";
+    else if (t.src === "local") tag = "本地";
     else if (t.src === "qq") {
       /* QQ 音质标记: SQ=无损可用 / HQ=320k 可用 */
       const q = t.hasSQ ? " SQ" : t.hasHQ ? " HQ" : "";
@@ -1601,6 +1619,28 @@ async function execCmd(raw) {
       else cmSay("用法: mode [seq|shuffle|one|顺序|随机|单曲]", 3200, true);
       break;
     }
+    case "import":
+    case "local": {
+      /* 手动导入本地音源: import <文件完整路径> */
+      if (!arg) {
+        echo("<span class='p'>导入音源</span> 操作流程：", "dim");
+        echo("1. 在资源管理器找到音频文件（支持 mp3/flac/m4a/ogg/wav/aac）", "dim");
+        echo("2. 按住 Shift 右键文件 → 「复制文件地址」（或复制路径文本）", "dim");
+        echo("3. 输入 <b>import 路径</b>，例如: import D:\\Music\\song.flac", "dim");
+        echo("导入后加入队列末尾并自动播放；频谱/歌词/情绪引擎照常工作（歌词会尝试读同目录同名 .lrc）", "dim");
+        break;
+      }
+      if (!window.__CM_IS_TAURI__) { toastLike("浏览器预览不支持本地文件", "dim"); break; }
+      const p = arg.replace(/^["']|["']$/g, "").replace(/\//g, "\\");
+      if (!/\.(mp3|flac|m4a|ogg|wav|aac)$/i.test(p)) { echo("<span class='p'>⏺</span> 仅支持 mp3/flac/m4a/ogg/wav/aac", "err"); break; }
+      const fname = p.split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
+      const track = { id: 0, name: fname, artist: "本地文件", album: "", src: "local", localPath: p };
+      state.queue.push(track);
+      renderRows(state.queue, false);
+      echo("<span class='p'>⏺</span> 已导入本地音源: <b>" + esc(fname) + "</b>", "ok");
+      loadTrack(state.queue.length - 1);
+      break;
+    }
     case "demo": state.queue = DEMO_TRACKS.slice(); renderRows(DEMO_TRACKS, false); loadTrack(0); break;
     case "diag": doDiag(); break;
     case "logs": {
@@ -1614,7 +1654,7 @@ async function execCmd(raw) {
     case "help":
     case "?": {
       echo("<span class='p'>── 播放 ──</span>", "dim");
-      echo("<b>play &lt;关键词&gt;</b> 搜索播放（双平台） · <b>radio &lt;名&gt;</b> 电台 · <b>next</b>/<b>prev</b> 切歌 · <b>ff</b>/<b>rw</b> [秒] 快进快退 · <b>speed</b> [0.5-2] 倍速 · <b>vol</b> 0-100 音量", "dim");
+      echo("<b>play &lt;关键词&gt;</b> 搜索播放（双平台） · <b>import &lt;路径&gt;</b> 导入本地音源（输 import 看流程） · <b>radio &lt;名&gt;</b> 电台 · <b>next</b>/<b>prev</b> 切歌 · <b>ff</b>/<b>rw</b> [秒] 快进快退 · <b>speed</b> [0.5-2] 倍速 · <b>vol</b> 0-100 音量", "dim");
       echo("<span class='p'>── 队列与歌单 ──</span>", "dim");
       echo("<b>mode</b> [seq|shuffle|one] 循环模式（顺序/随机/单曲） · <b>playlist &lt;url|id&gt;</b> 导入网易云歌单 · <b>my</b> 网易云歌单 · <b>qmy</b> QQ歌单 · <b>demo</b> 演示歌单", "dim");
       echo("<span class='p'>── 音质与显示 ──</span>", "dim");
