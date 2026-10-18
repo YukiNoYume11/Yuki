@@ -1679,7 +1679,15 @@ const THEMES = [
 ];
 let themeCur = localStorage.getItem("cm_theme") || "dark";
 if (!THEMES.some(t => t.key === themeCur)) themeCur = "dark";
-function applyTheme() { document.documentElement.dataset.theme = themeCur; }
+function applyTheme() {
+  document.documentElement.dataset.theme = themeCur;
+  /* transfish 主题专属标题文案(与默认 Claude 风格完全独立) */
+  const isMtf = themeCur === "transfish";
+  const h1 = document.querySelector(".welcome h1");
+  const meta = document.querySelector(".welcome .meta");
+  if (h1) h1.textContent = isMtf ? "エムティーエフ音楽" : "ClaudeMusic";
+  if (meta) meta.textContent = isMtf ? "エムティーエフの空·夢ちゃんが寝たくない" : "Claude code·小梦想睡觉";
+}
 applyTheme();
 function setTheme(key) {
   if (!THEMES.some(t => t.key === key)) return false;
