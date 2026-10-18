@@ -1,6 +1,6 @@
 [package]
 name = "yukimusic"
-version = "1.0.3"
+version = "1.0.4"
 description = "私人非商用音乐播放器 — Claude Code 风格"
 edition = "2021"
 

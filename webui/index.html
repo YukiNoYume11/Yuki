@@ -354,7 +354,7 @@
     </div>
 
     <div class="out" id="out">
-      <div class="ln dim">YukiMusic v1.0.3 — play 关键词 / qlogin QQ导入 / quality 音质 / help</div>
+      <div class="ln dim">YukiMusic v1.0.4 — play 关键词 / qlogin QQ导入 / quality 音质 / help</div>
     </div>
 
     <div class="viz-strip">
@@ -396,7 +396,7 @@
     <div class="statusbar">
       <span class="arrows">› ›</span>
       <span>mood auto on (<b>m</b> 循环切换) · ←退5s →进5s 长按加速</span>
-      <span>play &lt;词&gt; · radio &lt;名&gt; · demo · diag</span>
+      <span>help 查看全部命令</span>
       <span class="right" id="mood-desc">歌内相对情绪驱动字幕与交互</span>
     </div>
   </div>
@@ -1612,7 +1612,19 @@ async function execCmd(raw) {
       break;
     }
     case "help":
-      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · mode [seq|shuffle|one] · vol 0-100 · quality [standard|exhigh|lossless|hires|jymaster] · theme [dark|transfish] · mood auto|欢快|平静|忧郁|高潮 · lyric on|off|offset ±秒 · login [cookie 值] · logout · qlogin &lt;cookie&gt; · qlogout · qmy · my · playlist &lt;url|id&gt; · demo · diag · logs · clear", "dim"); break;
+    case "?": {
+      echo("<span class='p'>── 播放 ──</span>", "dim");
+      echo("<b>play &lt;关键词&gt;</b> 搜索播放（双平台） · <b>radio &lt;名&gt;</b> 电台 · <b>next</b>/<b>prev</b> 切歌 · <b>ff</b>/<b>rw</b> [秒] 快进快退 · <b>speed</b> [0.5-2] 倍速 · <b>vol</b> 0-100 音量", "dim");
+      echo("<span class='p'>── 队列与歌单 ──</span>", "dim");
+      echo("<b>mode</b> [seq|shuffle|one] 循环模式（顺序/随机/单曲） · <b>playlist &lt;url|id&gt;</b> 导入网易云歌单 · <b>my</b> 网易云歌单 · <b>qmy</b> QQ歌单 · <b>demo</b> 演示歌单", "dim");
+      echo("<span class='p'>── 音质与显示 ──</span>", "dim");
+      echo("<b>quality</b> [standard|exhigh|lossless|hires|jymaster] 音质（双平台） · <b>lyric</b> on|off|offset ±秒 歌词开关/校准 · <b>theme</b> [dark|transfish] 主题 · <b>mood</b> auto|欢快|平静|忧郁|高潮 情绪引擎", "dim");
+      echo("<span class='p'>── 账号 ──</span>", "dim");
+      echo("<b>login</b> 网易云扫码登录（login cookie &lt;值&gt; 粘贴） · <b>logout</b> 退出 · <b>qlogin</b> QQ 一键导入（或 qlogin &lt;cookie&gt;） · <b>qlogout</b> 退出 QQ", "dim");
+      echo("<span class='p'>── 系统 ──</span>", "dim");
+      echo("<b>diag</b> 环境自检 · <b>logs</b> 打开日志目录 · <b>clear</b> 清屏 · <b>help</b> 本帮助", "dim");
+      break;
+    }
     case "clear":
       document.querySelectorAll("#out > .ln, #out > .row").forEach(el => el.remove());
       break;
