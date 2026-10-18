@@ -28,7 +28,7 @@
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
   .term {
-    flex: 1; max-width: 1080px; display: flex; flex-direction: column;
+    flex: 1; display: flex; flex-direction: column;
     background: var(--win); border: 1px solid #44413B; border-radius: 10px; overflow: hidden;
     position: relative;
   }
@@ -354,7 +354,7 @@
     </div>
 
     <div class="out" id="out">
-      <div class="ln dim">YukiMusic v1.0.2 — play 关键词 / qlogin QQ导入 / quality 音质 / help</div>
+      <div class="ln dim">YukiMusic v1.0.3 — play 关键词 / qlogin QQ导入 / quality 音质 / help</div>
     </div>
 
     <div class="viz-strip">
@@ -377,6 +377,7 @@
         <span class="tm" id="time-cur">0:00 / 0:00</span>
         <span class="qtag" id="q-tag" title="当前音质" style="display:none"></span>
         <button class="btn" id="btn-speed" title="倍速(点击循环)" style="width:auto;padding:0 7px;font-size:10px">1.0x</button>
+        <button class="btn" id="btn-mode" title="循环模式(点击切换)" style="width:auto;padding:0 7px;font-size:10px">顺序</button>
         <div class="vol" id="vol-widget">
           <span class="lb">VOL</span>
           <div class="pbar" id="vol-bar"><div class="tr"><div class="fl" id="v-fill" style="width:80%"></div></div></div>
@@ -1128,7 +1129,39 @@ function loadTrack(i) {
 }
 audio.addEventListener("playing", () => { failStreak = 0; setPlayingUI(true); startMoodLoop(); });
 audio.addEventListener("pause", () => { if (!audio.ended) { state.playing = false; $("btn-play").textContent = "▶"; mascotSet("idle"); } });
-audio.addEventListener("ended", () => { if (state.queue.length) loadTrack(state.cur + 1); });
+/* ==================== 循环模式: seq 顺序循环 / shuffle 随机循环 / one 单曲循环 ==================== */
+const PLAY_MODES = [
+  { key: "seq", label: "顺序" },
+  { key: "shuffle", label: "随机" },
+  { key: "one", label: "单曲" },
+];
+let playMode = "seq";
+try { const m = localStorage.getItem("cm_playmode"); if (PLAY_MODES.some(x => x.key === m)) playMode = m; } catch (e) {}
+function applyPlayMode() { $("btn-mode").textContent = PLAY_MODES.find(x => x.key === playMode).label; }
+applyPlayMode();
+function setPlayMode(key) {
+  if (!PLAY_MODES.some(x => x.key === key)) return false;
+  playMode = key;
+  try { localStorage.setItem("cm_playmode", key); } catch (e) {}
+  applyPlayMode();
+  return true;
+}
+$("btn-mode").addEventListener("click", () => {
+  const next = PLAY_MODES[(PLAY_MODES.findIndex(x => x.key === playMode) + 1) % PLAY_MODES.length];
+  setPlayMode(next.key);
+  cmSay("循环模式 → " + next.label, 2200, true);
+});
+audio.addEventListener("ended", () => {
+  if (!state.queue.length) return;
+  if (playMode === "one") { audio.currentTime = 0; audio.play().catch(() => {}); return; }
+  if (playMode === "shuffle" && state.queue.length > 1) {
+    let n = state.cur;
+    while (n === state.cur) n = Math.floor(Math.random() * state.queue.length);
+    loadTrack(n);
+    return;
+  }
+  loadTrack(state.cur + 1);
+});
 let failStreak = 0;
 audio.addEventListener("error", () => {
   if (!audio.src) return;
@@ -1555,6 +1588,19 @@ async function execCmd(raw) {
       } else cmSay("可用主题: " + THEMES.map(t => t.key).join(" / "), 3200, true);
       break;
     }
+    case "mode": {
+      const alias = { seq: "seq", shuffle: "shuffle", one: "one", 顺序: "seq", 随机: "shuffle", 单曲: "one" };
+      if (!arg) {
+        const next = PLAY_MODES[(PLAY_MODES.findIndex(x => x.key === playMode) + 1) % PLAY_MODES.length];
+        setPlayMode(next.key);
+        echo("<span class='p'>循环</span> → <b>" + next.label + "</b>（mode seq/shuffle/one 直接指定）", "dim");
+        break;
+      }
+      const k = alias[arg.toLowerCase()] || alias[arg];
+      if (k && setPlayMode(k)) echo("<span class='p'>循环</span> → <b>" + esc(PLAY_MODES.find(x => x.key === k).label) + "</b>", "ok");
+      else cmSay("用法: mode [seq|shuffle|one|顺序|随机|单曲]", 3200, true);
+      break;
+    }
     case "demo": state.queue = DEMO_TRACKS.slice(); renderRows(DEMO_TRACKS, false); loadTrack(0); break;
     case "diag": doDiag(); break;
     case "logs": {
@@ -1566,7 +1612,7 @@ async function execCmd(raw) {
       break;
     }
     case "help":
-      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · quality [standard|exhigh|lossless|hires|jymaster] · theme [dark|transfish] · mood auto|欢快|平静|忧郁|高潮 · lyric on|off|offset ±秒 · login [cookie 值] · logout · qlogin &lt;cookie&gt; · qlogout · qmy · my · playlist &lt;url|id&gt; · demo · diag · logs · clear", "dim"); break;
+      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · mode [seq|shuffle|one] · vol 0-100 · quality [standard|exhigh|lossless|hires|jymaster] · theme [dark|transfish] · mood auto|欢快|平静|忧郁|高潮 · lyric on|off|offset ±秒 · login [cookie 值] · logout · qlogin &lt;cookie&gt; · qlogout · qmy · my · playlist &lt;url|id&gt; · demo · diag · logs · clear", "dim"); break;
     case "clear":
       document.querySelectorAll("#out > .ln, #out > .row").forEach(el => el.remove());
       break;
