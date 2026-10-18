@@ -1,6 +1,6 @@
 [package]
 name = "claudemusic"
-version = "0.5.11"
+version = "0.5.12"
 description = "私人非商用音乐播放器 — Claude Code 风格"
 edition = "2021"
 

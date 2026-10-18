@@ -145,6 +145,37 @@ fn proxy_fetch(target: &str, range: &Option<String>, send_referer: bool) -> Resu
     Ok((status, ct, content_range, buf))
 }
 
+/// 音频 URL 判定(按扩展名, 与域名无关)
+fn is_audio_url(t: &str) -> bool {
+    let l = t.to_lowercase();
+    [".mp3", ".flac", ".m4a", ".ogg", ".aac", ".wav"].iter().any(|e| l.contains(e))
+}
+
+/// 伪流式: 音频请求的 Range 钳制为 ≤2MB 分片。
+/// 代理是缓冲转发(受 Tauri API 限制无法真流式), 无损 FLAC 40MB+ 遇慢 CDN(QQ tc.qq.com)会整段
+/// 下载完才响应 → 起播卡 20s+。钳制后浏览器收到 206+Content-Range 会自动续传后续分片,
+/// 起播只需第一个 2MB, 与 CDN 速度解耦。
+fn clamp_audio_range(range: &Option<String>, is_audio_file: bool) -> Option<String> {
+    if !is_audio_file {
+        return range.clone();
+    }
+    const CAP: u64 = 2 * 1024 * 1024;
+    match range {
+        None => Some(format!("bytes=0-{}", CAP - 1)),
+        Some(r) => {
+            let s = r.trim().trim_start_matches("bytes=");
+            let mut it = s.split('-');
+            let start: u64 = it.next().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+            let end: Option<u64> = it.next().and_then(|v| v.trim().parse().ok());
+            let capped = match end {
+                Some(e) if e >= start && e - start + 1 <= CAP => e,
+                _ => start + CAP - 1,
+            };
+            Some(format!("bytes={start}-{capped}"))
+        }
+    }
+}
+
 fn handle_proxy(app: tauri::AppHandle, target: String, range: Option<String>) -> Response<Vec<u8>> {
     let allowed = url::Url::parse(&target)
         .ok()
@@ -160,6 +191,8 @@ fn handle_proxy(app: tauri::AppHandle, target: String, range: Option<String>) ->
     }
 
     let is_audio = target.contains("music.126.net");
+    let is_audio_file = is_audio_url(&target);
+    let range = clamp_audio_range(&range, is_audio_file);
     let mut used = target.clone();
     // 首选: http + Referer + Range(与浏览器 <audio> 取流一致)
     let mut result = proxy_fetch(&used, &range, true);
@@ -214,8 +247,8 @@ fn handle_proxy(app: tauri::AppHandle, target: String, range: Option<String>) ->
 
     match result {
         Ok((status, ct, content_range, buf)) => {
-            // 音频 CDN 探针(仅 music.126.net 音频流): 正常音频为数 MB audio/mpeg; 小响应则 dump 正文定位
-            if is_audio {
+            // 音频 CDN 探针(全部音频流, 含 QQ): 正常音频为数 MB audio/*; 小响应则 dump 正文定位
+            if is_audio || is_audio_file {
                 let mut line = format!(
                     "PROXY music status={status} ct={ct} bytes={} url={}",
                     buf.len(),
