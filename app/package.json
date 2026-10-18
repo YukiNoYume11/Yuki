@@ -1,6 +1,6 @@
 {
   "name": "yukimusic",
-  "version": "0.5.13",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "tauri": "tauri"
