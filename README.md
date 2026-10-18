@@ -1,4 +1,4 @@
-# ClaudeMusic — 私人非商用音乐播放器
+# YukiMusic — 私人非商用音乐播放器
 
 Tauri 桌面音乐软件 · Claude Code 终端风格 UI · Claude 吉祥物交互
 

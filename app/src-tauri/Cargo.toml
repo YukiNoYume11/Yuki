@@ -1,5 +1,5 @@
 [package]
-name = "claudemusic"
+name = "yukimusic"
 version = "0.5.13"
 description = "私人非商用音乐播放器 — Claude Code 风格"
 edition = "2021"

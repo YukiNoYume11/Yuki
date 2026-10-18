@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-//! ClaudeMusic Tauri 后端
+//! YukiMusic Tauri 后端(原名 ClaudeMusic; identifier 保留 local.claudemusic 以兼容既有数据)
 //! 核心能力: proxy 自定义协议 —— 把网易云 API/音频请求代理为同源请求,
 //! 解决 CORS 限制, 让前端 fetch 与 Web Audio 情绪分析(AnalyserNode)正常工作。
 //! 登录/歌单/VIP 取链: 直接走 weapi(AES-128-CBC + 原始 RSA)加密接口, Cookie 存进程内状态。
