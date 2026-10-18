@@ -79,6 +79,21 @@ fn app_log(app: tauri::AppHandle, msg: String) {
     log_msg(&app, &msg);
 }
 
+/// 解析并返回日志目录(确保存在), 供前端 logs 命令展示/打开
+#[tauri::command]
+fn open_logs(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = app
+        .path()
+        .app_log_dir()
+        .unwrap_or_else(|_| std::env::temp_dir());
+    let _ = std::fs::create_dir_all(&dir);
+    log_msg(&app, "LOGS 打开日志目录");
+    let p = dir.to_string_lossy().to_string();
+    // WebView2 沙箱内无法直接打开, 由 Rust 拉起资源管理器
+    let _ = std::process::Command::new("explorer").arg(&p).spawn();
+    Ok(p)
+}
+
 /// 域名白名单: 精确或点分后缀匹配(防 evil163.com 这类绕过)
 fn host_allowed(host: &str) -> bool {
     ["163.com", "126.net", "qq.com"].iter().any(|suffix| {
@@ -1330,6 +1345,7 @@ fn main() {
         .manage(QqState(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             app_log,
+            open_logs,
             netease_qr_key,
             netease_qr_svg,
             netease_qr_check,

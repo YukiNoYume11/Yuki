@@ -345,7 +345,7 @@
     </div>
 
     <div class="out" id="out">
-      <div class="ln dim">YukiMusic v1.0.0 — play 关键词 / qlogin QQ导入 / quality 音质 / help</div>
+      <div class="ln dim">YukiMusic v1.0.1 — play 关键词 / qlogin QQ导入 / quality 音质 / help</div>
     </div>
 
     <div class="viz-strip">
@@ -1548,8 +1548,16 @@ async function execCmd(raw) {
     }
     case "demo": state.queue = DEMO_TRACKS.slice(); renderRows(DEMO_TRACKS, false); loadTrack(0); break;
     case "diag": doDiag(); break;
+    case "logs": {
+      if (!window.__CM_IS_TAURI__) { toastLike("浏览器预览无日志文件", "dim"); break; }
+      try {
+        const p = await cmInvoke("open_logs");
+        echo("<span class='p'>日志</span> 目录: <b>" + esc(p) + "</b>（已在资源管理器中打开）", "ok");
+      } catch (e) { echo("打开日志目录失败: " + esc(String(e && e.message || e)), "err"); }
+      break;
+    }
     case "help":
-      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · quality [standard|exhigh|lossless|hires|jymaster] · theme [dark|transfish] · mood auto|欢快|平静|忧郁|高潮 · lyric on|off|offset ±秒 · login [cookie 值] · logout · qlogin &lt;cookie&gt; · qlogout · qmy · my · playlist &lt;url|id&gt; · demo · diag · clear", "dim"); break;
+      echo("<span class='p'>命令</span> play &lt;词&gt; · radio &lt;名&gt; · next · prev · ff/rw [秒] · speed [0.5-2] · vol 0-100 · quality [standard|exhigh|lossless|hires|jymaster] · theme [dark|transfish] · mood auto|欢快|平静|忧郁|高潮 · lyric on|off|offset ±秒 · login [cookie 值] · logout · qlogin &lt;cookie&gt; · qlogout · qmy · my · playlist &lt;url|id&gt; · demo · diag · logs · clear", "dim"); break;
     case "clear":
       document.querySelectorAll("#out > .ln, #out > .row").forEach(el => el.remove());
       break;
