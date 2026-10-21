@@ -10,6 +10,14 @@
 
 > 个人作品，非商业用途。代码公开仅供学习参考。
 
+## 下载
+
+前往 [**Releases**](https://github.com/YukiNoYume11/Yuki/releases/latest) 下载最新安装包 `YukiMusic_x64-setup.exe`（约 2.9 MB）
+
+- Windows 10/11 x64，免管理员权限（安装到当前用户目录）
+- WebView2 缺失时安装包会自动联网下载
+- 也可以按下方「构建」一节自行编译
+
 ---
 
 ## 特性

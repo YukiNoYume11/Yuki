@@ -1,7 +1,8 @@
-# 构建产物与可执行文件
+# 构建产物与可执行文件(发布版走 GitHub Releases 附件, 不入库)
 target/
 dist/
 bundle/
+release/
 *.exe
 *.msi
 
